@@ -72,6 +72,6 @@ class OpMeResult():
         # add constant lists of window length `w` to start and
         # end of the list to avoid moving avg starting/enging at zero.
         ad = np.empty(len(data) + 2 * w).astype(data.dtype)
-        ad[0: w], ad[w:-w], ad[-w: ] = data[0], data, data[-1]
+        ad[0:w], ad[w:-w], ad[-w:] = data[0], data, data[-1]
         mavg_vec = np.convolve(ad, np.ones(int(w))/float(w), 'same')
         return self.tlist, mavg_vec[w:-w]

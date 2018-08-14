@@ -20,17 +20,19 @@ class QutipKernel():
         self.state     = None
         self.t_bath    = None
         self.y_0       = None
-        self.y_w       = None
         self.htl       = None
+        self.hu        = npmat_manylike(self.system.h0, [self.system.h0])
+
         self.e_ops     = None
         # Qobj
         self.q_state   = None
-        self.q_h0      = None
+        self.q_hu      = None
         self.q_htl     = []
         self.q_L       = None
         self.q_e_ops   = None
         # prepared state
         self.n_dst     = None
+        self.r_y_0     = None
         # flags
         self.synced    = False
         self.compiled  = False
@@ -41,7 +43,7 @@ class QutipKernel():
             basic jumping operators. """
         assert not self.compiled
 
-        self.q_h0 = Qobj(self.system.h0)
+        tij = lambda i, j: ketbra(self.system.s, j, i)
         self.q_L = []
         for k, jumps in enumerate(self.system.get_jumps()):
             if jumps is None:
@@ -49,66 +51,110 @@ class QutipKernel():
 
             if k == 0:
                 for t in jumps:
-                    self.q_L.append((t['w'], Qobj(t['d'] * self.tij(*t['I']))))
+                    self.q_L.append((t['w'], Qobj(t['d'] * tij(*t['I']))))
             else:
                 for jump in jumps.reshape((int(len(jumps) / (k + 1)), k + 1)):
                     self.q_L.append((
                         jump[0]['w'],
-                        Qobj(sum(t['d'] * self.tij(*t['I']) for t in jump))
+                        Qobj(sum(t['d'] * tij(*t['I']) for t in jump))
                     ))
 
         self.compiled = True
 
 
-    def tij(self, i, j):
-        """ projection from i to j """
-        return ketbra(self.system.s, j, i)
-
-
-    def sync(self, state=None, t_bath=None, y_0=None, htl=None, e_ops=None):
+    def sync(self, state=None, t_bath=None, y_0=None, hu=None, htl=None, e_ops=None):
         """ sync data into kernel environment. """
         assert self.compiled
 
         self.synced = False
 
-        if state is None and self.state is None:
-            raise RuntimeError('state must be defined at least once.')
-        if t_bath is None and self.t_bath is None:
-            raise RuntimeError('t_bath must be defined at least once.')
-        if y_0 is None and self.y_0 is None:
-            raise RuntimeError('y_0 must be defined at least once.')
-        if self.system.n_htl > 0 and htl is None and self.htl is None:
-            raise RuntimeError('htl must be defined at least once.')
-        if self.system.n_e_ops > 0 and e_ops is None and self.e_ops is None:
-            raise RuntimeError('e_ops must be defined at least once.')
-        if self.system.n_e_ops == 0 and e_ops is not None:
-            raise RuntimeError('e_ops is defined by reduced system n_e_ops is zero.')
+        self._validate_sync_args(state, t_bath, y_0, hu, htl, e_ops)
 
         if state is not None:
             self.state = npmat_manylike(self.system.h0, state)
-            self.q_state = [Qobj(s) for s in self.state]
-
+        if hu is not None:
+            self.hu = npmat_manylike(self.system.h0, hu)
         if t_bath is not None:
-            self.t_bath = nparr_manylike(self.state, t_bath, DTYPE_FLOAT)
+            self.t_bath = vectorize(t_bath, dtype=DTYPE_FLOAT)
             assert np.all(self.t_bath >= 0)
-            self.n_dst = [boson_stat(t) for t in self.t_bath]
-
         if y_0 is not None:
-            self.y_0 = nparr_manylike(self.state, y_0, DTYPE_FLOAT)
+            self.y_0 = vectorize(y_0, dtype=DTYPE_FLOAT)
             assert np.all(self.y_0 >= 0)
 
-        if self.system.n_htl > 0 and htl is not None:
-            self.htl = list(htl)
-            assert len(self.htl) == self.system.n_htl
-            self.q_htl = [[Qobj(sqmat(ht[0])), ht[1]] for ht in self.htl]
-
+        # XXX todo make observables listable
         if self.system.n_e_ops > 0 and e_ops is not None:
             self.e_ops = npmat_manylike(self.system.h0, e_ops)
             assert len(self.e_ops) == self.system.n_e_ops
             self.q_e_ops = [Qobj(e) for e in self.e_ops]
 
+        # XXX todo make time dependent operators listable
+        if self.system.n_htl > 0 and htl is not None:
+            self.htl = list(htl)
+            assert len(self.htl) == self.system.n_htl
+            self.q_htl = [[Qobj(sqmat(ht[0])), ht[1]] for ht in self.htl]
+
+        # normalize all buffers such that length are the same.
+        self.q_state, \
+        self.q_hu, \
+        self.n_dst, \
+        self.r_y_0 = self._sync_fill_up(
+            q_state = [Qobj(s) for s in self.state],
+            q_hu    = [Qobj(hu) for hu in self.hu],
+            n_dst   = [boson_stat(t) for t in self.t_bath],
+            r_y_0   = self.y_0)
 
         self.synced = True
+
+
+    def _sync_fill_up(self, q_state, q_hu, n_dst, r_y_0):
+        """ some buffers might be specified by only one value while other buffers
+            have `l` values. In this case we fill up the singleton buffers by
+            copying the values `l` times to normalize all buffers lengths.
+            if this is not possible, a `RuntimeError` is raised.
+
+            the normalized buffers are returned in the same order as the
+            list of arguments of this function. 
+            """
+        lengths = list(set([len(s) for s in (q_state, q_hu, n_dst, r_y_0)]))
+        if len(lengths) != 1:
+            # we can only normalize if there are two lengths and one length is 1.
+            # this means that we have n buffers of length l and m buffers of length 1.
+            # the m buffers of length 1 are then filled up by copy the data n times.
+            if len(lengths) == 2:
+                l = lengths[0] if lengths[1] == 1 else lengths[1]
+                if len(q_state) == 1:  q_state  = l * [q_state[0]]
+                if len(q_hu) == 1:     q_hu     = l * [q_hu[0]]
+                if len(n_dst) == 1:    n_dst    = l * [n_dst[0]]
+                if len(r_y_0) == 1:    r_y_0    = np.array([r_y_0[0]] * l, dtype=r_y_0.dtype)
+            else:
+                raise RuntimeError("data length mismatch.")
+
+        return q_state, q_hu, n_dst, r_y_0
+
+
+    def _validate_sync_args(self, state, t_bath, y_0, hu, htl, e_ops):
+        """ ensure that we have data in all buffers """
+
+        if state is None and self.state is None:
+            raise RuntimeError('state must be defined at least once.')
+
+        if hu is None and self.hu is None:
+            raise RuntimeError('hu must be defined at least once.')
+
+        if t_bath is None and self.t_bath is None:
+            raise RuntimeError('t_bath must be defined at least once.')
+
+        if y_0 is None and self.y_0 is None:
+            raise RuntimeError('y_0 must be defined at least once.')
+
+        if self.system.n_htl > 0 and htl is None and self.htl is None:
+            raise RuntimeError('htl must be defined at least once.')
+
+        if self.system.n_e_ops > 0 and e_ops is None and self.e_ops is None:
+            raise RuntimeError('e_ops must be defined at least once.')
+
+        if self.system.n_e_ops == 0 and e_ops is not None:
+            raise RuntimeError('e_ops is defined by reduced system n_e_ops is zero.')
 
 
     def run(self, tlist, sync_state=False):
@@ -129,19 +175,17 @@ class QutipKernel():
         # result data preparation
         tstate = None
         if self.q_e_ops is None:
-            tstate = np.empty(
-                (self.state.shape[0], len(tlist), *self.state.shape[1:]),
-                dtype=settings.DTYPE_COMPLEX)
+            shape = (self.state.shape[0], len(tlist), *self.state.shape[1:])
+            tstate = np.empty(shape, dtype=settings.DTYPE_COMPLEX)
         texpect = None
         if self.q_e_ops is not None:
-            texpect = np.empty(
-                (self.state.shape[0], len(self.q_e_ops), len(tlist)),
-                dtype=settings.DTYPE_COMPLEX)
+            shape = (self.state.shape[0], len(self.q_e_ops), len(tlist))
+            texpect = np.empty(shape, dtype=settings.DTYPE_COMPLEX)
 
         # integrate states
         q_state_new = []
-        zipped      = zip(self.q_state, self.t_bath, self.y_0, self.n_dst)
-        for (i, (q_s, t_bath, y_0, n_dst)) in enumerate(zipped):
+        zipped      = zip(self.q_hu, self.q_state, self.r_y_0, self.n_dst)
+        for (i, (q_hu, q_s, y_0, n_dst)) in enumerate(zipped):
 
             # prepare lindblad operators
             C = lambda w: w**3 * (1 + n_dst(w)) if w >= 0 \
@@ -153,7 +197,7 @@ class QutipKernel():
 
             # mesolve
             Lf  = [l for l in L if not np.allclose(l.full(), 0)]
-            H   = [self.q_h0] + self.q_htl
+            H   = [q_hu] + self.q_htl
             res = mesolve(H     = H[0] if len(H) == 1 else H,
                           rho0  = q_s,
                           tlist = tlist,

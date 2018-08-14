@@ -97,14 +97,14 @@ def boson_stat(T):
     return lambda E: 1.0 / (np.exp(E / T) - 1)
 
 
-def vectorize(x):
+def vectorize(x, dtype=None):
     if isinstance(x, list):
         x = np.array(x)
     elif not isinstance(x, np.ndarray):
         x = np.array([x])
 
     assert len(x.shape) == 1, 'input must have trivial shape.'
-    return x
+    return x if dtype is None else x.astype(dtype)
 
 
 def unvectorize(x):
@@ -121,7 +121,30 @@ def thermal_dist(E, T):
     Z = sum(np.exp(-1.0/T * e) for e in E)
     return np.array([np.exp(-1.0/T * e) / Z for e in E], settings.DTYPE_FLOAT)
 
+
+def list_fillup_like(a, b):
+    assert isinstance(a, list)
+    assert isinstance(b, list)
+    if len(b) == 1:
+        return [b[0]] * len(a)
+    elif len(b) == len(a):
+        return b
+    raise ValueError()
+
+
+
 def npmat_manylike(a, b):
+    """ normalizes a mixed input `b` in context of a given square matrix (`(M x M)`) `a`
+        such that a `np.ndarray` of `n` matricies (shape=`(n, M, M)`).
+
+        valid input:
+
+        - `b` is a `list`: `[np.ndarray(...), np.ndarray(...), ...]`
+        - `b` is a np.ndarray of shape=`(M*M, )`
+        - `b` is a np.ndarray of shape=`(M, M)`
+        - `b` is a np.ndarray of shape=`(N, M, M)`
+        - `b` is a np.ndarray of shape=`(N, M * M)`
+        """
     assert is_sqmat(a)
 
     if isinstance(b, list):

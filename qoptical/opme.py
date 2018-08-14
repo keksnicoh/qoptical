@@ -148,6 +148,8 @@ def opmesolve(H, rho0, t_bath, y_0, tlist, dipole=None, tw=None, e_ops=[], kerne
     if isinstance(H, list):
         if len(H) == 1:
             h0, htl = H[0], []
+        elif is_sqmat(np.matrix(H)) or np.isscalar(H[0]):
+            h0, htl = H, []
         else:
             h0, htl = H[0], H[1:]
     else:

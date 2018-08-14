@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-""" test some of the components of opmesolve.
+""" test some of the components of opme.
     :author: keksnicoh
 """
 
-from . import opmesolve, settings
+from . import opme
+from . import settings
 import numpy as np
 import pytest
 
@@ -31,10 +32,10 @@ import pytest
 def test_reduced_system(args, kwargs, valid):
     """ test instantiation of ``ReducedSystem`` """
     if valid:
-        opmesolve.ReducedSystem(*args, **kwargs)
+        opme.ReducedSystem(*args, **kwargs)
     else:
         try:
-            opmesolve.ReducedSystem(*args, **kwargs)
+            opme.ReducedSystem(*args, **kwargs)
         except AssertionError:
             return
         assert False
@@ -73,7 +74,7 @@ def test_jumps_3gen():
         5,     #4
         8,     #5
     ])
-    system = opmesolve.ReducedSystem(h0)
+    system = opme.ReducedSystem(h0)
 
     # the calculated spectrum should be equal to diagonal
     # elements of the given hamiltonian h0
@@ -133,11 +134,10 @@ def test_jumps_3gen():
 
 
 def test_opmesolve_thermal_state():
-    result = opmesolve.opmesolve(
-        H=[
-            0, 0, 0,
-            0, 1, 0,
-            0, 0, 2],
+    result = opme.opmesolve(
+        H=[0, 0, 0,
+           0, 1, 0,
+           0, 0, 2],
         rho0=[
             [0.5, 0, 0, 0, 0, 0, 0, 0, 0.5],
             [1, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -172,7 +172,7 @@ def test_qutip_kernel_case_1():
             [0,   0, 0, 0, 0,],
             [.5j,   0, 0, 0, 0.5,]]
     tlist = np.arange(0, 0.2, 0.00005)
-    opmesolve.opmesolve(H=h0f,
+    opme.opmesolve(H=h0f,
                         rho0=rho0,
                         dipole=j0f,
                         tlist=tlist,

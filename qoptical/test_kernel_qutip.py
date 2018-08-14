@@ -2,7 +2,7 @@
 """ test the QuTip reference kernel implementation.
     :author: keksnicoh
 """
-from .opmesolve import ReducedSystem
+from .opme import ReducedSystem
 from .kernel_qutip import QutipKernel
 from .util import ketbra, eigh
 import pytest
