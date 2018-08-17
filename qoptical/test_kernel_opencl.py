@@ -1,0 +1,165 @@
+# -*- coding: utf-8 -*-
+""" OpenCL Kernel implementation tests.
+"""
+from .opme import ReducedSystem, opmesolve
+from .kernel_qutip import QutipKernel
+from .kernel_opencl import OpenCLKernel
+from .util import ketbra, eigh
+import pytest
+import numpy as np
+
+def test_von_neumann():
+    """ we integrate von Neumann equation to test the
+        following content:
+
+        - reduced system with no transitions
+          => von Neumann
+        - evolve multiple states
+        - all states at all times t should be recorded
+          and be available in `result.tstate`
+        - we test some physical properties of the results
+          i)  desity operator properties at all t
+          ii) behavior of coherent elements (rotate at certain w_ij)
+
+        """
+
+    PRECISION_DT_ANGLE = 6
+    tr = (0.0, 13.37, 0.01)
+
+    h0 = [0, 0, 0, 0,
+          0, 1, 0, 0,
+          0, 0, 3, 0,
+          0, 0, 0, 5.5,]
+    system = ReducedSystem(h0, tw=[])
+    kernel = OpenCLKernel(system)
+    kernel.compile()
+
+    # we confige a state whith 3 coherent elements.
+    # we expect that the diagonal elements are constant
+    # in time while the coherent elements rotate at
+    # the transition frrquency, meaning
+    #
+    #     d arg(<0|rho(t)|1>) * dt d = (w_1 - w_0) * 0.1 = 0.1
+    #     d arg(<0|rho(t)|2>) * dt d = (w_2 - w_0) * 0.1 = 0.3
+    #     d arg(<2|rho(t)|3>) * dt d = (w_3 - w_2) * 0.1 = 0.25
+    #
+    expect_w10, expect_w20, expect_w32 = 1.0, 3.0, 2.5
+    ground_state = [
+        0.7,  0.25, 0.5, 0.0,
+        0.25, 0.2,  0.0, 0.0,
+        0.5,  0.0,  0.0, 0.3,
+        0.0,  0.0,  0.3, 0.1
+    ]
+
+    # this groundstate should be stationary.
+    gs2 = [1, 0, 0, 0,
+           0, 0, 0, 0,
+           0, 0, 0, 0,
+           0, 0, 0, 0,]
+    kernel.sync(state=[ground_state, gs2])
+    result = kernel.run(tr)
+
+    # Debug:
+    #qkernel = QutipKernel(system)
+    #qkernel.compile()
+    #qkernel.sync(state=[ground_state, gs2], t_bath=0, y_0=1)
+    #result = qkernel.run(np.arange(*tr))
+    #print(np.round(result.state, 2))
+
+    ts = result.tstate
+
+    assert tstate_rho_hermitian(ts)
+    assert tstate_rho_trace(1.0, ts)
+
+    # test diagonal elements, r_00(t+dt) - r_00(t) = 0 for all t
+    assert np.allclose(ts[:,0,0,0][:-1] - ts[:,0,0,0][1:], 0)
+    assert np.allclose(ts[:,0,1,1][:-1] - ts[:,0,1,1][1:], 0)
+    assert np.allclose(ts[:,0,2,2][:-1] - ts[:,0,2,2][1:], 0)
+    assert np.allclose(ts[:,0,3,3][:-1] - ts[:,0,3,3][1:], 0)
+
+    # test rotation of coherent elements by
+    # calulating(r_01(t+dt) - r_01(t))/dt
+    r10 = np.round(
+        (np.angle(ts[:,0,1,0][:-1]) - np.angle(ts[:,0,1,0][1:])) % np.pi,
+        PRECISION_DT_ANGLE
+    )
+    assert np.all(r10 == expect_w10 * tr[2])
+
+    r20 = np.round(
+        (np.angle(ts[:,0,2,0][:-1]) - np.angle(ts[:,0,2,0][1:])) % np.pi,
+        PRECISION_DT_ANGLE
+    )
+    assert np.all(r20 == expect_w20 * tr[2])
+
+    r32 = np.round(
+        (np.angle(ts[:,0,3,2][:-1]) - np.angle(ts[:,0,3,2][1:])) % np.pi,
+        PRECISION_DT_ANGLE
+    )
+    assert np.all(r32 == expect_w32 * tr[2])
+
+    # test result data
+    assert np.allclose(result.state, result.tstate[-1])
+
+
+def tstate_rho_hermitian(ts):
+    return np.all(np.abs(np.transpose(ts, (0, 1, 3, 2)).conj() - ts) < 0.0000001)
+
+
+def tstate_rho_trace(expected, ts):
+    trace = np.trace(ts, axis1=2, axis2=3).reshape((ts.shape[0] * 2))
+    return np.allclose(trace, expected)
+
+
+def test_von_neumann_basis():
+    """ we integrate a system which is not provided in eigenbase.
+        two states are tests:
+
+            1. stationary (and pure) state |i><i|
+            2. some non stationary state
+
+        test checks basic integrator and density operator
+        properties and compares the result against QuTip
+        reference solver.
+        """
+    REF_TOL = 0.0001
+    tr = (0, 1, 0.001)
+    h0 = [
+        1,   1.5,  0,
+        1.5, 1.42, 3,
+        0,   3,    2.11,
+    ];
+
+    ev, s = np.linalg.eigh(np.array(h0).reshape((3, 3)))
+    s = s.T
+    rho1 = np.outer(s[0].conj().T, s[0])
+    rho2 = np.array([
+        0.5, 0,   0,
+        0,   0.5, 0,
+        0,   0,   0
+    ]).reshape((3, 3))
+    states = [rho1, rho2]
+
+    
+
+
+    system = ReducedSystem(h0, tw=[])
+    kernel = OpenCLKernel(system)
+    kernel.compile()
+    kernel.sync(state=states)
+    result = kernel.run(tr)
+
+    # test density operator
+    ts = result.tstate
+    assert tstate_rho_hermitian(ts[1:2])
+    assert tstate_rho_trace(1.0, ts)
+
+    # test result data
+    assert np.allclose(result.state, result.tstate[-1])
+
+    # test stationary state
+    assert np.allclose(result.state[0], rho1)
+
+    # test against reference
+    resultr = opmesolve(h0, states, 0, 0, tw=[], tlist=np.arange(*tr), kernel="QuTip")
+    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)

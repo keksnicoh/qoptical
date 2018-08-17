@@ -94,14 +94,15 @@ class QutipKernel():
             self.q_htl = [[Qobj(sqmat(ht[0])), ht[1]] for ht in self.htl]
 
         # normalize all buffers such that length are the same.
+        tb = self.t_bath if self.t_bath is not None else [0.0]
         self.q_state, \
         self.q_hu, \
         self.n_dst, \
         self.r_y_0 = self._sync_fill_up(
             q_state = [Qobj(s) for s in self.state],
             q_hu    = [Qobj(hu) for hu in self.hu],
-            n_dst   = [boson_stat(t) for t in self.t_bath],
-            r_y_0   = self.y_0)
+            n_dst   = [boson_stat(t) for t in tb],
+            r_y_0   = self.y_0 or np.array([0.0], dtype=DTYPE_FLOAT))
 
         self.synced = True
 
@@ -113,7 +114,7 @@ class QutipKernel():
             if this is not possible, a `RuntimeError` is raised.
 
             the normalized buffers are returned in the same order as the
-            list of arguments of this function. 
+            list of arguments of this function.
             """
         lengths = list(set([len(s) for s in (q_state, q_hu, n_dst, r_y_0)]))
         if len(lengths) != 1:
@@ -141,11 +142,12 @@ class QutipKernel():
         if hu is None and self.hu is None:
             raise RuntimeError('hu must be defined at least once.')
 
-        if t_bath is None and self.t_bath is None:
-            raise RuntimeError('t_bath must be defined at least once.')
+        if len(self.q_L) > 0:
+            if t_bath is None and self.t_bath is None:
+                raise RuntimeError('t_bath must be defined at least once.')
 
-        if y_0 is None and self.y_0 is None:
-            raise RuntimeError('y_0 must be defined at least once.')
+            if y_0 is None and self.y_0 is None:
+                raise RuntimeError('y_0 must be defined at least once.')
 
         if self.system.n_htl > 0 and htl is None and self.htl is None:
             raise RuntimeError('htl must be defined at least once.')
