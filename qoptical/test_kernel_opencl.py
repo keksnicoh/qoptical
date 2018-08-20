@@ -139,9 +139,6 @@ def test_von_neumann_basis():
     ]).reshape((3, 3))
     states = [rho1, rho2]
 
-    
-
-
     system = ReducedSystem(h0, tw=[])
     kernel = OpenCLKernel(system)
     kernel.compile()
@@ -163,3 +160,141 @@ def test_von_neumann_basis():
     resultr = opmesolve(h0, states, 0, 0, tw=[], tlist=np.arange(*tr), kernel="QuTip")
     assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
     assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+
+def test_two_level_TZero():
+    """ most simple dissipative case.
+        two level system with at T=0:
+
+          d rho / dt = -i[H,rho] + y_0 \Omega^3 D[A(\Omega)]
+
+        """
+    REF_TOL = 0.0001
+    OMEGA = 2.0
+    tr = (0, 1.0, 0.001)
+    y_0 = [0.5, 0.5, 0.25]
+    h0 = [
+        0, 0,
+        0, OMEGA
+    ]
+    states = [
+        # T=inf
+        [0.5, 0.0, 0.0, 0.5],
+        # T=0
+        [1.0, 0.0, 0.0, 0.0],
+        # T=t + coherence
+        [0.75, 0.5, 0.5, 0.25],
+    ]
+    sys = ReducedSystem(h0, tw=[OMEGA])
+    kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
+    kernel.compile()
+    kernel.sync(state=states, y_0=y_0)
+    result = kernel.run(tr)
+
+    # reference result
+    resultr = opmesolve(h0, states, t_bath=0, y_0=y_0, tw=[OMEGA], tlist=np.arange(*tr), kernel="QuTip")
+
+    # test against reference
+    print(result.state[2])
+    print(resultr.state[2])
+    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)
+
+def test_three_level_TZero():
+    """ two different annihilation processes A(Omega), A(2*Omega)
+        at T=0:
+
+          d rho / dt = -i[H,rho] + y_0 \Omega^3 D[A(\Omega)]
+                                 + y_0 \Omega^3 D[A(2*\Omega)]
+
+        """
+    REF_TOL = 0.0001
+    OMEGA = 2.0
+    tr = (0, 0.1, 0.001)
+    tw = [OMEGA, 2*OMEGA]
+    h0 = [
+        0.0, 0, 0,
+        0, OMEGA, 0,
+        0, 0, 2 * OMEGA,
+    ]
+    states = [
+        # T=inf
+        [
+            1.0/3.0, 0.0, 0.0,
+            0.0, 1.0/3.0, 0.0,
+            0.0, 0.0, 1.0/3.0
+        ],
+        # T=0
+        [
+            1.0, 0.0, 0.0,
+            0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0
+        ],
+        # T=t + coherence
+        [
+            0.4, 0.4, 0.6,
+            0.4, 0.2, 0.2,
+            0.6, 0.2, 0.4
+        ],
+    ]
+    sys = ReducedSystem(h0, tw=tw)
+    kernel = OpenCLKernel(sys)
+    kernel.compile()
+    kernel.sync(state=states, y_0=1.0)
+    result = kernel.run(tr)
+
+    # reference result
+    resultr = opmesolve(h0, states, t_bath=0, y_0=1.0, tw=tw, tlist=np.arange(*tr), kernel="QuTip")
+
+    # test against reference
+    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)
+
+
+def test_four_level_TZero():
+    """ two different annihilation processes A(Omega), A(2*Omega)
+        at T=0:
+
+          d rho / dt = -i[H,rho] + y_0 \Omega^3 D[A(\Omega)]
+                                 + y_0 \Omega^3 D[A(2*\Omega)]
+
+        """
+    REF_TOL = 0.0001
+    OMEGA = 2.0
+    tr = (0, 0.1, 0.001)
+    h0 = [
+        0.0, 0, 0, 0,
+        0, 1.0, 0, 0,
+        0, 0, 2.0, 0,
+        0, 0, 0, 3.0,
+    ]
+    states = [
+        # T=0
+        [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+        ],
+        # some weird state
+        [
+            0.4, 0.4, 0.6, 0.3,
+            0.4, 0.3, 0.2, 0.1,
+            0.6, 0.2, 0.1, 0.6,
+            0.3, 0.2, 0.6, 0.2,
+        ],
+    ]
+    sys = ReducedSystem(h0)
+    kernel = OpenCLKernel(sys)
+    kernel.compile()
+    kernel.sync(state=states, y_0=0.15)
+    result = kernel.run(tr)
+
+    # reference result
+    resultr = opmesolve(h0, states, t_bath=0, y_0=0.15, tlist=np.arange(*tr), kernel="QuTip")
+
+    # test against reference
+    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+

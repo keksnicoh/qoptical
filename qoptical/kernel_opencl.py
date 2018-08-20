@@ -6,6 +6,7 @@
 import pyopencl as cl
 import pyopencl.tools
 import numpy as np
+import itertools
 from .settings import *
 from .util import *
 from .result import OpMeResult
@@ -51,6 +52,7 @@ def r_cltypes(src, double_precision=False):
     if double_precision:
         src = src.replace('$(cfloat_t)', 'cdouble_t') \
                  .replace('$(cfloat_mul)', 'cdouble_mul') \
+                 .replace('$(cfloat_rmul)', 'cdouble_rmul') \
                  .replace('$(cfloat_sub)', 'cdouble_sub') \
                  .replace('$(cfloat_new)', 'cdouble_new') \
                  .replace('$(cfloat_add)', 'cdouble_add') \
@@ -63,6 +65,7 @@ def r_cltypes(src, double_precision=False):
         src = src.replace('$(cfloat_t)', 'cfloat_t') \
                  .replace('$(cfloat_mul)', 'cfloat_mul') \
                  .replace('$(cfloat_sub)', 'cfloat_sub') \
+                 .replace('$(cfloat_rmul)', 'cfloat_rmul') \
                  .replace('$(cfloat_new)', 'cfloat_new') \
                  .replace('$(cfloat_add)', 'cfloat_add') \
                  .replace('$(cfloat_neg)', 'cfloat_neg') \
@@ -121,7 +124,7 @@ class OpenCLKernel():
         self.t_bath    = None
         self.y_0       = None
         self.htl       = None
-        self.hu        = npmat_manylike(self.system.h0, [self.system.h0, self.system.h0])
+        self.hu        = npmat_manylike(self.system.h0, [self.system.h0])
         self.ctx       = ctx or self._ctx()
         self.ev        = self.system.ev
         self._mb       = np.array(self.system.s, dtype=self.system.s.dtype)
@@ -142,10 +145,22 @@ class OpenCLKernel():
         )
         return KernelEnvironment().add_struct(strct_name, c_decl)
 
+    def _compile_struct(self, name, dtype):
+        _, c_decl    = cl.tools.match_dtype_to_c_struct(
+            self.ctx.devices[0],
+            name,
+            dtype
+        )
+        return KernelEnvironment().add_struct(name, c_decl)
+
     def compile(self):
         kenv = KernelEnvironment()
-
+        DTYPE_T_JUMP = np.dtype([
+            ('IDX', np.int32),
+            ('PF', DTYPE_COMPLEX),
+        ]);
         kenv += self._compile_int_parameters()
+        kenv += self._compile_struct('t_jump', DTYPE_T_JUMP)
         src = """
 #include <pyopencl-complex.h>
 // butcher schema
@@ -170,7 +185,9 @@ class OpenCLKernel():
 
 __kernel void opmesolve_rk4_eb(
     __global const $(cfloat_t) *hu,
+    __global const t_jump *jb,
     __global const t_int_parameters *int_parameters,
+    __global const $(float) *y_0,
     __global $(cfloat_t) *rho,
     __global $(cfloat_t) *result,
     __global $(float) *test_buffer
@@ -260,43 +277,109 @@ __kernel void opmesolve_rk4_eb(
     barrier(CLK_LOCAL_MEM_FENCE);
 
     rho[__in_offset + __item] = _rho[__item];
-   // rho[__in_offset + __item] = $(cfloat_new)(n, get_num_groups(0));
-  //     return;
-
 }
         """
 
-        dim = self.system.h0.shape[0]
+        M = self.system.h0.shape[0]
 
-        # von Neumann commutator
+
+        self.h_jump = self.create_h_jump(DTYPE_T_JUMP)
+        n_jump = self.h_jump.shape[2]
+        # render R(K) macro content.
         CX_UNITARY = ("KI(K) = $(cfloat_add)(KI(K), $(cfloat_mul)(ihbar, "
                       "$(cfloat_sub)($(cfloat_mul)(HU(LX, {i}), R({i}, LY)), "
                       "$(cfloat_mul)(HU({i}, LY), R(LX, {i})))));");
-        CX_DEFINE_RK = '\\\n    '.join([
-            CX_UNITARY.format(i=r_clint(i))
-            for i in range(dim)
+        CX_JUMP = ("KI(K) = $(cfloat_add)(KI(K), $(cfloat_rmul)(y_0[GID] * (1.0+0.0), "
+                   "$(cfloat_mul)(jb[N_JUMP * __item+{i}].PF, "
+                   "_rky[jb[N_JUMP * __item+{i}].IDX])));")
+        r_define_rk = '\\\n    '.join(
+            [CX_UNITARY.format(i=r_clint(i)) for i in range(M)]
+            + [CX_JUMP.format(i=r_clint(i)) for i in range(n_jump)])
+
+        # render constants
+        r_define = '\n'.join('#define {} {}'.format(*df) for df in [
+            ('NATURE_HBAR',   r_clfloat(1)),
+            ('IN_BLOCK_SIZE', r_clint(M**2)),
+            ('THREAD_X',      r_clint(M)),
+            ('N_JUMP',        r_clint(n_jump)),
         ])
 
-        CX_DEFINE = '\n'.join('#define {} {}'.format(*df) for df in [
-            ('NATURE_HBAR',       r_clfloat(1)),
-            ('IN_BLOCK_SIZE',     r_clint(dim**2)),
-            ('THREAD_X',          r_clint(dim))
-        ])
-
-        src = src.replace('/*{define}*/',  CX_DEFINE) \
+        src = src.replace('/*{define}*/',  r_define) \
                  .replace('/*{structs}*/', kenv.render_structs()) \
-                 .replace('/*{R(K)}*/',    CX_DEFINE_RK)
+                 .replace('/*{R(K)}*/',    r_define_rk)
         src = r_cltypes(src)
+        print(src)
+       # assert False
      #   print(src)
         self.prg = cl.Program(self.ctx, src).build()
 
 
+    def create_h_jump(self, dtype):
+
+        # go thru all jumps to create matrix element
+        # interchange stacks for all (i, j) elements of the state.
+        M          = self.system.h0.shape[0]
+        idx        = lambda i, j: M * i + j
+        jelem      = [[] for _ in range(M ** 2)]
+        all_idx    = [(i, j) for i in range(M) for j in range(M)]
+        flat_jumps = self.get_flat_jumps()
+
+        for ((i, j), jump) in itertools.product(all_idx, flat_jumps):
+            w3 = jump['w'][0] ** 3
+            tidx = idx(i, j)
+
+            # A rho Ad
+            jx, jy = jump[np.where(jump['I'][:,1] == i)[0]], \
+                     jump[np.where(jump['I'][:,1] == j)[0]]
+            for j1, j2 in itertools.product(jx, jy):
+                fidx = idx(j1['I'][0], j2['I'][0])
+                jelem[tidx].append((fidx, w3 * j1['d'] * j2['d'].conj()))
+
+            # -1/2 {rho, Ad A}
+            jy = jump[np.where(jump['I'][:,0] == j)[0]]
+            for j2 in jy:
+                for j1 in jump[np.where(jump['I'][:,1] == j2['I'][1])[0]]:
+                    fidx = idx(i, j1['I'][0])
+                    jelem[tidx].append((fidx, -0.5 * w3 * j1['d'].conj() * j2['d']))
+            jx = jump[np.where(jump['I'][:,0] == i)[0]]
+            for j1 in jx:
+                for j2 in jump[np.where(jump['I'][:,1] == j1['I'][1])[0]]:
+                    fidx = idx(j2['I'][0], j)
+                    jelem[tidx].append((fidx, -0.5 * w3 * j1['d'].conj() * j2['d']))
+
+        n_jump = max(len(_) for _ in jelem)
+        h_jump = np.zeros((M, M, max(1, n_jump)), dtype=dtype)
+        for (i, j) in [(i, j) for j in range(M) for i in range(M)]:
+            h_jump[i, j, 0:len(jelem[idx(i, j)])] = jelem[idx(i, j)]
+
+        return h_jump
+
+    def get_flat_jumps(self):
+        fj = []
+        for nw, jumps in enumerate(self.system.get_jumps()):
+            if jumps is None:
+                continue
+            jumps = jumps.reshape((int(len(jumps) / (nw+1)), nw+1))
+            for jump in jumps:
+                fj.append(jump)
+        return fj
+
+
     def sync(self, state=None, t_bath=None, y_0=None, hu=None, htl=None, e_ops=None):
         self.state = npmat_manylike(self.system.h0, state)
+        if y_0 is not None:
+            self.y_0 = vectorize(y_0, dtype=DTYPE_FLOAT)
+            assert np.all(self.y_0 >= 0)
 
         self.buf_state = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=self._eb(self.state))
-        self.buf_hu = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self._eb(self.hu))
+        self.buf_hu = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self._eb(self.state.shape[0]*[self.hu]))
 
+        y_0 = self.y_0
+        if y_0 is None:
+            y_0 = [0.0]
+        if len(y_0) == 1:
+            y_0 = np.array([y_0] * self.state.shape[0], dtype=DTYPE_FLOAT)
+        self.buf_y0 = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=y_0)
 
     def run(self, trange, sync_state=False):
         trange = self.normalize_trange(trange)
@@ -309,10 +392,11 @@ __kernel void opmesolve_rk4_eb(
         self.b_int_param = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=h_int_param)
         b_tstate = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_tstate)
         b_debug = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_debug)
+        b_jump = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_jump)
 
         # run
         queue = cl.CommandQueue(self.ctx)
-        bufs = (self.buf_hu, self.b_int_param, self.buf_state, b_tstate, b_debug)
+        bufs = (self.buf_hu, b_jump, self.b_int_param, self.buf_y0, self.buf_state, b_tstate, b_debug)
         self.prg.opmesolve_rk4_eb(queue, *self._work_layout(), *bufs)
 
         res_state = np.empty_like(self.state)

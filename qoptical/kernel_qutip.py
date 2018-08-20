@@ -102,7 +102,7 @@ class QutipKernel():
             q_state = [Qobj(s) for s in self.state],
             q_hu    = [Qobj(hu) for hu in self.hu],
             n_dst   = [boson_stat(t) for t in tb],
-            r_y_0   = self.y_0 or np.array([0.0], dtype=DTYPE_FLOAT))
+            r_y_0   = self.y_0 if self.y_0 is not None else np.array([0.0], dtype=DTYPE_FLOAT))
 
         self.synced = True
 
