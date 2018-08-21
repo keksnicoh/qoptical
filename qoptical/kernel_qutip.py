@@ -43,7 +43,7 @@ class QutipKernel():
             basic jumping operators. """
         assert not self.compiled
 
-        tij = lambda i, j: ketbra(self.system.s, j, i)
+        tij = lambda i, j: ketbra(self.system.s, i, j)
         self.q_L = []
         for k, jumps in enumerate(self.system.get_jumps()):
             if jumps is None:

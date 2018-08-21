@@ -88,36 +88,36 @@ def test_jumps_3gen():
     assert len(jumps[0]) == 4
     assert len(set(jumps[0][:]['w'])) == len(jumps[0])
 
-    assert np.all(jumps[0][0]['I'] == (4, 0))
+    assert np.all(jumps[0][0]['I'] == (0, 4))
     assert ev[4] - ev[0] == jumps[0][0]['w']
-    assert np.all(jumps[0][1]['I'] == (5, 2))
+    assert np.all(jumps[0][1]['I'] == (2, 5))
     assert ev[5] - ev[2] == jumps[0][1]['w']
-    assert np.all(jumps[0][2]['I'] == (5, 1))
+    assert np.all(jumps[0][2]['I'] == (1, 5))
     assert ev[5] - ev[1] == jumps[0][2]['w']
-    assert np.all(jumps[0][3]['I'] == (5, 0))
+    assert np.all(jumps[0][3]['I'] == (0, 5))
     assert ev[5] - ev[0] == jumps[0][3]['w']
 
     # test 2-degen jumps
     assert len(jumps[1]) == 4 * 2
     assert 2 * len(set(jumps[1][:]['w'])) == len(jumps[1])
 
-    assert np.all(jumps[1][0]['I'] == (1, 0))
-    assert np.all(jumps[1][1]['I'] == (2, 1))
+    assert np.all(jumps[1][0]['I'] == (0, 1))
+    assert np.all(jumps[1][1]['I'] == (1, 2))
     assert jumps[1][0]['w'] == jumps[1][1]['w']
     assert jumps[1][0]['w'] == ev[1] - ev[0]
 
-    assert np.all(jumps[1][2]['I'] == (3, 1))
-    assert np.all(jumps[1][3]['I'] == (5, 4))
+    assert np.all(jumps[1][2]['I'] == (1, 3))
+    assert np.all(jumps[1][3]['I'] == (4, 5))
     assert jumps[1][2]['w'] == jumps[1][3]['w']
     assert jumps[1][2]['w'] == ev[3] - ev[1]
 
-    assert np.all(jumps[1][4]['I'] == (3, 0))
-    assert np.all(jumps[1][5]['I'] == (4, 2))
+    assert np.all(jumps[1][4]['I'] == (0, 3))
+    assert np.all(jumps[1][5]['I'] == (2, 4))
     assert jumps[1][4]['w'] == jumps[1][5]['w']
     assert jumps[1][4]['w'] == ev[3] - ev[0]
 
-    assert np.all(jumps[1][6]['I'] == (4, 1))
-    assert np.all(jumps[1][7]['I'] == (5, 3))
+    assert np.all(jumps[1][6]['I'] == (1, 4))
+    assert np.all(jumps[1][7]['I'] == (3, 5))
     assert jumps[1][6]['w'] == jumps[1][7]['w']
     assert jumps[1][6]['w'] == ev[4] - ev[1]
 
@@ -125,9 +125,9 @@ def test_jumps_3gen():
     assert len(jumps[2]) == 3
     assert 3 * len(set(jumps[2][:]['w'])) == len(jumps[2])
 
-    assert np.all(jumps[2][0]['I'] == (2, 0))
-    assert np.all(jumps[2][1]['I'] == (3, 2))
-    assert np.all(jumps[2][2]['I'] == (4, 3))
+    assert np.all(jumps[2][0]['I'] == (0, 2))
+    assert np.all(jumps[2][1]['I'] == (2, 3))
+    assert np.all(jumps[2][2]['I'] == (3, 4))
     assert jumps[2][0]['w'] == jumps[2][1]['w']
     assert jumps[2][0]['w'] == jumps[2][2]['w']
     assert jumps[2][0]['w'] == ev[2] - ev[0]

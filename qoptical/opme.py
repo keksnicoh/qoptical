@@ -110,9 +110,9 @@ class ReducedSystem():
               if self.dipole is not None else \
               (lambda i, j: 1)
 
-        return np.array([((i, j), dij(i, j), np.abs(e1 - e2), 0)
-                for i, e1 in enumerate(self.ev)
-                for j, e2 in enumerate(self.ev)
+        return np.array([((i, j), dij(j, i), np.abs(e1 - e2), 0)
+                for j, e1 in enumerate(self.ev)
+                for i, e2 in enumerate(self.ev)
                 if np.isclose(e1 - e2, w)], dtype=DTYPE_JUMP)
 
 
@@ -164,6 +164,9 @@ def opmesolve(H, rho0, t_bath, y_0, tlist, dipole=None, tw=None, e_ops=[], kerne
     # get kernel
     if isinstance(kernel, str):
         if kernel == "QuTip":
+            kernel = QutipKernel(system)
+        elif kernel == "OpenCL":
+            from .kernel_opencl import OpenCLKernel
             kernel = QutipKernel(system)
         else:
             raise ValueError('invalid kernel {}.'.format(kernel))

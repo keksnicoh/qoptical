@@ -3,7 +3,7 @@
 """
 from .opme import ReducedSystem, opmesolve
 from .kernel_qutip import QutipKernel
-from .kernel_opencl import OpenCLKernel
+from .kernel_opencl import OpenCLKernel, f2cl
 from .util import ketbra, eigh
 import pytest
 import numpy as np
@@ -67,7 +67,6 @@ def test_von_neumann():
     #print(np.round(result.state, 2))
 
     ts = result.tstate
-
     assert tstate_rho_hermitian(ts)
     assert tstate_rho_trace(1.0, ts)
 
@@ -136,7 +135,7 @@ def test_von_neumann_basis():
         0.5, 0,   0,
         0,   0.5, 0,
         0,   0,   0
-    ]).reshape((3, 3))
+    ], dtype=np.complex64).reshape((3, 3))
     states = [rho1, rho2]
 
     system = ReducedSystem(h0, tw=[])
@@ -194,49 +193,45 @@ def test_two_level_TZero():
     resultr = opmesolve(h0, states, t_bath=0, y_0=y_0, tw=[OMEGA], tlist=np.arange(*tr), kernel="QuTip")
 
     # test against reference
-    print(result.state[2])
-    print(resultr.state[2])
     assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
     assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
     assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)
 
 def test_three_level_TZero():
-    """ two different annihilation processes A(Omega), A(2*Omega)
-        at T=0:
+    """ two different annihilation processes A(Omega), A(2*Omega) at T=0:
 
-          d rho / dt = -i[H,rho] + y_0 \Omega^3 D[A(\Omega)]
-                                 + y_0 \Omega^3 D[A(2*\Omega)]
-
+        - two possible jumps
+        - no dipole
+        - eigenbase
+        - compared optimized vs. reference
         """
     REF_TOL = 0.0001
-    OMEGA = 2.0
-    tr = (0, 0.1, 0.001)
-    tw = [OMEGA, 2*OMEGA]
+    OMEGA   = 2.0
+    tr      = (0, 0.1, 0.001)
+    tw      = [OMEGA, 2*OMEGA]
+
     h0 = [
         0.0, 0, 0,
         0, OMEGA, 0,
         0, 0, 2 * OMEGA,
     ]
-    states = [
+
+    states = [[
         # T=inf
-        [
-            1.0/3.0, 0.0, 0.0,
-            0.0, 1.0/3.0, 0.0,
-            0.0, 0.0, 1.0/3.0
-        ],
+        1.0/3.0, 0.0, 0.0,
+        0.0, 1.0/3.0, 0.0,
+        0.0, 0.0, 1.0/3.0
+    ], [
         # T=0
-        [
-            1.0, 0.0, 0.0,
-            0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0
-        ],
+        1.0, 0.0, 0.0,
+        0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0
+    ], [
         # T=t + coherence
-        [
-            0.4, 0.4, 0.6,
-            0.4, 0.2, 0.2,
-            0.6, 0.2, 0.4
-        ],
-    ]
+        0.4, 0.4, 0.6,
+        0.4, 0.2, 0.2,
+        0.6, 0.2, 0.4
+    ]]
     sys = ReducedSystem(h0, tw=tw)
     kernel = OpenCLKernel(sys)
     kernel.compile()
@@ -253,43 +248,49 @@ def test_three_level_TZero():
 
 
 def test_four_level_TZero():
-    """ two different annihilation processes A(Omega), A(2*Omega)
-        at T=0:
+    """ four level system at T=0.
 
-          d rho / dt = -i[H,rho] + y_0 \Omega^3 D[A(\Omega)]
-                                 + y_0 \Omega^3 D[A(2*\Omega)]
-
+        - all possible jumps
+        - no dipole
+        - eigenbase
+        - compared optimized + non-optimized vs. reference
         """
+
     REF_TOL = 0.0001
-    OMEGA = 2.0
-    tr = (0, 0.1, 0.001)
+    OMEGA   = 2.0
+    tr      = (0, 0.1, 0.001)
     h0 = [
         0.0, 0, 0, 0,
         0, 1.0, 0, 0,
         0, 0, 2.0, 0,
         0, 0, 0, 3.0,
     ]
-    states = [
+    states = [[
         # T=0
-        [
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-        ],
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+    ], [
         # some weird state
-        [
-            0.4, 0.4, 0.6, 0.3,
-            0.4, 0.3, 0.2, 0.1,
-            0.6, 0.2, 0.1, 0.6,
-            0.3, 0.2, 0.6, 0.2,
-        ],
-    ]
+        0.4, 0.4, 0.6, 0.3,
+        0.4, 0.3, 0.2, 0.2,
+        0.6, 0.2, 0.1, 0.6,
+        0.3, 0.2, 0.6, 0.2,
+    ]]
+
     sys = ReducedSystem(h0)
+
     kernel = OpenCLKernel(sys)
     kernel.compile()
     kernel.sync(state=states, y_0=0.15)
     result = kernel.run(tr)
+
+    kernel2 = OpenCLKernel(sys)
+    kernel2.optimize_jumps = False
+    kernel2.compile()
+    kernel2.sync(state=states, y_0=0.15)
+    result2 = kernel2.run(tr)
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=0, y_0=0.15, tlist=np.arange(*tr), kernel="QuTip")
@@ -297,4 +298,178 @@ def test_four_level_TZero():
     # test against reference
     assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
     assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(result2.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result2.state[1] - resultr.state[1]) < REF_TOL)
 
+
+def test_two_level_T():
+    """ most simple dissipative case at finite temperature:
+        two level system at T > 0:
+
+          d rho / dt = -i[H,rho] + y_0 * \Omega^3 * (1 + N(\Omega)) * D[A(\Omega)]
+                                 + y_0 * \Omega^3 * N(\Omega) * D[A^\dagger(\Omega)]
+
+        - single jump
+        - no dipole
+        - eigenbase
+        - compared optimized vs. reference
+        """
+    REF_TOL = 0.0001
+    OMEGA   = 2.0
+    tr      = (0, 1.0, 0.001)
+    y_0     = 0.5
+    t_bath  = 1.0
+
+    h0 = [
+        0, 0,
+        0, OMEGA
+    ]
+    states = [[
+        # T=inf
+        0.5, 0.2,
+        0.2, 0.5
+    ], [
+        # T=0
+        1.0, 0.0,
+        0.0, 0.0
+    ]]
+
+    sys = ReducedSystem(h0, tw=[OMEGA])
+
+    kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
+    kernel.compile()
+    kernel.sync(state=states, y_0=y_0, t_bath=t_bath)
+    result = kernel.run(tr)
+
+
+    # reference result
+    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tw=[OMEGA], tlist=np.arange(*tr), kernel="QuTip")
+
+    # test against reference
+    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+
+def test_three_level_T():
+    """ three level system at finite temperature.
+
+        - two jumps (1*Omega, 2*Omega)
+        - no dipole
+        - eigenbase
+        - compare optimized vs. reference
+
+        """
+    REF_TOL = 0.0001
+    OMEGA   = 2.0
+    tr      = (0, 0.1, 0.001)
+    tw      = [OMEGA, 2*OMEGA]
+    t_bath  = 1.0
+    h0 = [
+        0.0, 0, 0,
+        0, OMEGA, 0,
+        0, 0, 2 * OMEGA,
+    ]
+    states = [[
+        # T=inf
+        1.0/3.0, 0.0, 0.0,
+        0.0, 1.0/3.0, 0.0,
+        0.0, 0.0, 1.0/3.0
+    ], [
+        # T=0
+        1.0, 0.0, 0.0,
+        0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0
+    ], [
+        # T=t + coherence
+        0.4, 0.4, 0.6,
+        0.4, 0.2, 0.2,
+        0.6, 0.2, 0.4
+    ]]
+
+    sys = ReducedSystem(h0, tw=tw)
+
+    kernel = OpenCLKernel(sys)
+    assert kernel.optimize_jumps
+    kernel.compile()
+    kernel.sync(state=states, y_0=1.0, t_bath=t_bath)
+    result = kernel.run(tr)
+
+    # reference result
+    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=1.0, tw=tw, tlist=np.arange(*tr), kernel="QuTip")
+
+    # test against reference
+    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)
+
+def test_four_level_T():
+    """ four level system at finite temperature T
+
+        - all possible jumps
+        - no dipole
+        - eigenbase
+        - compare optimized and non-optimized vs. reference
+        """
+    REF_TOL = 0.0001
+    tr      = (0, 1.0, 0.001)
+    t_bath  = [1.0, 0.5]
+    y_0     = [1.3, 2.4]
+
+    h0 = [
+        0.0, 0, 0, 0,
+        0, 1.0, 0, 0,
+        0, 0, 2.0, 0,
+        0, 0, 0, 6.0,
+    ]
+
+    states = [[
+        # T=0
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+    ], [
+        # some weird state
+        0.4, 0.4, 0.6, 0.3,
+        0.4, 0.3, 0.2, 0.1,
+        0.6, 0.2, 0.1, 0.6,
+        0.3, 0.2, 0.6, 0.2,
+    ]]
+
+    sys = ReducedSystem(h0)
+    kernel = OpenCLKernel(sys)
+    kernel.optimize_jumps = True
+    kernel.compile()
+    kernel.sync(state=states, y_0=y_0, t_bath=t_bath)
+    result = kernel.run(tr)
+
+    kernel2 = OpenCLKernel(sys)
+    kernel2.optimize_jumps = False
+    kernel2.compile()
+    kernel2.sync(state=states, y_0=y_0, t_bath=t_bath)
+    result2 = kernel2.run(tr)
+
+    # reference result
+    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tlist=np.arange(*tr), kernel="QuTip")
+
+    # test against reference
+    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(result2.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result2.state[1] - resultr.state[1]) < REF_TOL)
+
+def derp(x): return 5*x
+def tdest_f2cl():
+    f2cl(lambda: np.sin(5, np.linalg.omg(234,xyt))**2)
+   # f2cl(lambda: 5.0 + 1)
+   # f2cl(lambda x: 5.0 + x + 5)
+ #   f2cl(lambda x: 6*sin(x,5,x)+cos(5))
+    #f2cl(lambda x: sin(sin(x + 5, y)))
+    f2cl(lambda x: sin(sin(x + 5, y) * cos(5,sin(-5)*242*a(x)))+blerp())
+    #f2cl(lambda x,y,z: sin(y / 5 - 5 % 3)+x)
+    f2cl(lambda x: x%2)
+   # f2cl(lambda x: x(4))
+
+  #  f2cl(lambda x: x)
+  #  f2cl(lambda x: x + 5)
+  #  f2cl(lambda x: sin(x, x, 3, 7, x))
+  #  f2cl(lambda x: 5+sin(x))

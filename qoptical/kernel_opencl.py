@@ -1,18 +1,57 @@
 # -*- coding: utf-8 -*-
-""" contains qutip kernels for solving optical
-    master equation.
+""" module containing OpenCL kernel.
+
+    The OpenCL kernel computes a state (M x M) component
+    per work-item. Many states can be computed in parallel.
+
+    The precompiler analyzed the structure of the dynamics
+    to generate the lines of code which interchange the
+    state components. For the unitary operators one line
+    of code per operator is generated:
+
+       CELL = f(CELL, IDX_0, H_0)
+       CELL = f(CELL, IDX_0, H_1, f_1(t, p))
+       CELL = f(CELL, IDX_0, H_1, f_1(t, p))
+
+       CELL = f(CELL, IDX_1, H_0)
+       CELL = f(CELL, IDX_1, H_1, f_1(t, p))
+       CELL = f(CELL, IDX_1, H_1, f_1(t, p))
+
+       ...
+
+       CELL = f(CELL, IDX_M, H_0)
+       CELL = f(CELL, IDX_M, H_1, f_1(t, p))
+       CELL = f(CELL, IDX_M, H_1, f_1(t, p))
+
+    The dissipators are evaluated such that all resulting
+    contributions into a CELL are known. On runtime,
+    the temperature dependent prefactors are calculated and the
+    values are accumulated such. For each jump one line of code
+    is generated
+
+       CELL += JUMP[0].PF * RHO[JUMP[0].IDX]
+       CELL += JUMP[1].PF * RHO[JUMP[1].IDX]
+
+       ...
+
+       CELL += JUMP[N_J].PF * RHO[JUMP[N_J].IDX]
+
+    with N_J max number of jumps to be performed (after optimization).
+
+    Using this concept the kernel internally avoids many unwanted
+    branchings.
+
     :author: keksnicoh
 """
 import pyopencl as cl
 import pyopencl.tools
 import numpy as np
-import itertools
+import itertools, os, dis
 from .settings import *
 from .util import *
 from .result import OpMeResult
 
 mf = cl.mem_flags
-
 
 DTYPE_TIME_RANGE = np.dtype([
     ('INT_T0',  np.float32),
@@ -27,92 +66,25 @@ DTYPE_INTEGRATOR_PARAM = np.dtype([
     ('INT_N',  np.int32),
 ])
 
+# a jump within the OpenCL kernel:
+# it contains the matrix-element id IDX which should be
+# added into the cell by a prefactor PF
+DTYPE_T_JMP = np.dtype([
+    ('IDX', np.int32),
+    ('PF', DTYPE_COMPLEX),
+])
 
-def r_clfloat(f, prec=None):
-    """ renders an OpenCL float representation """
-    if prec is not None:
-        raise NotImplementedError()
-    sf = str(f)
-    return ''.join([sf, '' if '.' in sf else '.', 'f'])
-
-
-def r_clfrac(p, q, prec):
-    """ renders an OpenCL fractional representation """
-    return "{}/{}".format(r_clfloat(p, prec), r_clfloat(q, prec))
-
-
-def r_clint(f):
-    """ renders an OpenCL integer representation """
-    assert isinstance(f, int)
-    return str(f)
-
-
-def r_cltypes(src, double_precision=False):
-
-    if double_precision:
-        src = src.replace('$(cfloat_t)', 'cdouble_t') \
-                 .replace('$(cfloat_mul)', 'cdouble_mul') \
-                 .replace('$(cfloat_rmul)', 'cdouble_rmul') \
-                 .replace('$(cfloat_sub)', 'cdouble_sub') \
-                 .replace('$(cfloat_new)', 'cdouble_new') \
-                 .replace('$(cfloat_add)', 'cdouble_add') \
-                 .replace('$(cfloat_neg)', 'cdouble_neg') \
-                 .replace('$(cfloat_conj)', 'cdouble_conj') \
-                 .replace('$(cfloat_fromreal)', 'cdouble_fromreal') \
-                 .replace('$(float)', 'double') \
-                 .replace('$(cf_)', 'cdouble_')
-    else:
-        src = src.replace('$(cfloat_t)', 'cfloat_t') \
-                 .replace('$(cfloat_mul)', 'cfloat_mul') \
-                 .replace('$(cfloat_sub)', 'cfloat_sub') \
-                 .replace('$(cfloat_rmul)', 'cfloat_rmul') \
-                 .replace('$(cfloat_new)', 'cfloat_new') \
-                 .replace('$(cfloat_add)', 'cfloat_add') \
-                 .replace('$(cfloat_neg)', 'cfloat_neg') \
-                 .replace('$(cfloat_conj)', 'cfloat_conj') \
-                 .replace('$(cfloat_fromreal)', 'cfloat_fromreal') \
-                 .replace('$(float)', 'float') \
-                 .replace('$(cf_)', 'cfloat_')
-
-    return src
-
-class KernelEnvironment():
-
-
-    def __init__(self,
-                 kernel_args = None,
-                 structs     = None,
-                 includes    = None,
-                 defines     = None,
-    ):
-        self.kernel_args = kernel_args or []
-        self.structs     = structs     or []
-        self.includes    = includes    or []
-        self.defines     = defines     or []
-
-
-    def __radd__(self, a):
-        kenv  = KernelEnvironment()
-
-        kenv.kernel_args = self.kernel_args + a.kernel_args
-        kenv.structs     = self.structs     + a.structs
-        kenv.includes    = self.includes    + a.includes
-        kenv.defines     = self.defines     + a.defines
-
-        return kenv
-
-    def __iadd__(self, a): return self.__radd__(a)
-
-    def add_struct(self, name, struct):
-        keys = [k for k, v in self.structs]
-        if name in keys:
-            raise ValueError('struct name "{}" allready in use.'.format(name))
-        self.structs.append((name, struct))
-        return self
-
-    def render_structs(self):
-        return "\n".join(v for k, v in self.structs)
-
+# a single jump instruction
+DTYPE_JMP_INSTR = np.dtype([
+    # source idx
+    ('IDX', np.int32),
+    # prefactor (dipole)
+    ('PF', DTYPE_COMPLEX),
+    # sponanious emission
+    ('SE', np.int32),
+    # transition frequency
+    ('W', DTYPE_FLOAT),
+])
 
 class OpenCLKernel():
 
@@ -124,235 +96,90 @@ class OpenCLKernel():
         self.t_bath    = None
         self.y_0       = None
         self.htl       = None
+
+        self.optimize_jumps = True
+
+        # generated kernel c code
+        self.c_kernel = None
         self.hu        = npmat_manylike(self.system.h0, [self.system.h0])
         self.ctx       = ctx or self._ctx()
         self.ev        = self.system.ev
         self._mb       = np.array(self.system.s, dtype=self.system.s.dtype)
 
-    def _ctx(self):
-        platforms = cl.get_platforms()
-        assert len(platforms) > 0
-        gpu_devices = list(d for d in platforms[0].get_devices() if d.type == cl.device_type.GPU)
-        assert len(gpu_devices) > 0
-        return cl.Context(devices=gpu_devices)
+        self.cl_local_size = None
 
-    def _compile_int_parameters(self):
-        strct_name   = 't_int_parameters'
-        _, c_decl    = cl.tools.match_dtype_to_c_struct(
-            self.ctx.devices[0],
-            strct_name,
-            DTYPE_INTEGRATOR_PARAM
-        )
-        return KernelEnvironment().add_struct(strct_name, c_decl)
+        # the number of jumping instructions due to dissipators
+        self.jmp_n = None
 
-    def _compile_struct(self, name, dtype):
-        _, c_decl    = cl.tools.match_dtype_to_c_struct(
-            self.ctx.devices[0],
-            name,
-            dtype
-        )
-        return KernelEnvironment().add_struct(name, c_decl)
+        # jumping instructions for all cells
+        self.jmp_instr = None
+
 
     def compile(self):
-        kenv = KernelEnvironment()
-        DTYPE_T_JUMP = np.dtype([
-            ('IDX', np.int32),
-            ('PF', DTYPE_COMPLEX),
-        ]);
-        kenv += self._compile_int_parameters()
-        kenv += self._compile_struct('t_jump', DTYPE_T_JUMP)
-        src = """
-#include <pyopencl-complex.h>
-// butcher schema
-#define b1 1.0f/6.0f
-#define b2 4.0f/6.0f
-#define b3 1.0f/6.0f
-#define a21 0.5f
-#define a31 -1
-#define a32 2
-/*{define}*/
-
-#define LX get_local_id(1)
-#define LY get_local_id(2)
-#define R(X,Y) _rky[THREAD_X*(X)+(Y)]
-#define HU(X,Y) _hu[THREAD_X*(X)+(Y)]
-#define GID get_group_id(0)
-#define KI(K) K[__item]
-
-#define RK(K) \\
-    /*{R(K)}*/
-/*{structs}*/
-
-__kernel void opmesolve_rk4_eb(
-    __global const $(cfloat_t) *hu,
-    __global const t_jump *jb,
-    __global const t_int_parameters *int_parameters,
-    __global const $(float) *y_0,
-    __global $(cfloat_t) *rho,
-    __global $(cfloat_t) *result,
-    __global $(float) *test_buffer
-) {
-    $(float) t;
-    int n;
-
-    int __in_offset, __item, __out_len;
-
-    $(cfloat_t) ihbar = $(cfloat_new)(0.0f, -1.0f / NATURE_HBAR);
-
-    __local $(cfloat_t) k1[IN_BLOCK_SIZE];
-    __local $(cfloat_t) k2[IN_BLOCK_SIZE];
-    __local $(cfloat_t) k3[IN_BLOCK_SIZE];
-    __local $(cfloat_t) _hu[IN_BLOCK_SIZE];
-    __local $(cfloat_t) _rho[IN_BLOCK_SIZE];
-    __local $(cfloat_t) _rky[IN_BLOCK_SIZE];
-    __local t_int_parameters int_prm;
-
-    __in_offset = IN_BLOCK_SIZE * get_global_id(0);
-    __item      = THREAD_X * LX + LY;
-    __out_len   = get_num_groups(0) * IN_BLOCK_SIZE;
-    // init local memory
-    int_prm      = int_parameters[GID];
-    _rho[__item] = rho[__in_offset + __item];
-    _hu[__item]  = hu[__in_offset + __item];
-
-    // t=0
-    result[__in_offset + __item] = _rho[__item];
-
-    // loop init
-    t  = int_prm.INT_T0;
-    n  = 1;
-    while (n < int_prm.INT_N) {
-        // k1
-        k1[__item] = $(cfloat_fromreal)(0.0f);
-        _rky[__item] = _rho[__item];
-
-        barrier(CLK_LOCAL_MEM_FENCE);
-        RK(k1)
-
-        // k2
-        barrier(CLK_LOCAL_MEM_FENCE);
-        k2[__item] = $(cfloat_fromreal)(0.0f);
-        _rky[__item].real = _rho[__item].real
-                          + a21 * int_prm.INT_DT * k1[__item].real;
-        _rky[__item].imag = _rho[__item].imag
-                          + a21 * int_prm.INT_DT * k1[__item].imag;
-
-        barrier(CLK_LOCAL_MEM_FENCE);
-        RK(k2)
-
-        // k3
-        barrier(CLK_LOCAL_MEM_FENCE);
-        k3[__item] = $(cfloat_fromreal)(0.0f);
-        _rky[__item].real = _rho[__item].real
-                          + a31 * int_prm.INT_DT * k1[__item].real
-                          + a32 * int_prm.INT_DT * k2[__item].real;
-        _rky[__item].imag = _rho[__item].imag
-                          + a31 * int_prm.INT_DT * k1[__item].imag
-                          + a32 * int_prm.INT_DT * k2[__item].imag;
-
-        barrier(CLK_LOCAL_MEM_FENCE);
-        RK(k3)
-        barrier(CLK_LOCAL_MEM_FENCE);
-
-        _rho[__item].real += int_prm.INT_DT * (
-            b1 * k1[__item].real
-            + b2 * k2[__item].real
-            + b3 * k3[__item].real
-        );
-        _rho[__item].imag += int_prm.INT_DT * (
-            b1 * k1[__item].imag
-            + b2 * k2[__item].imag
-            + b3 * k3[__item].imag
-        );
-
-        result[__out_len * n + __in_offset + __item] = _rho[__item];
-
-        t = int_prm.INT_T0 + (++n) * int_prm.INT_DT;
-
-        // debug buffer
-        if (GID == 0) {
-            test_buffer[n] = n-1;
-        }
-    }
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    rho[__in_offset + __item] = _rho[__item];
-}
-        """
-
         M = self.system.h0.shape[0]
+        self.cl_local_size = int(M * (M + 1) / 2)
 
+        # read template
+        with open(os.path.join(os.path.dirname(__file__), 'kernel_opencl.tmpl.c')) as f:
+            src = f.read()
 
-        self.h_jump = self.create_h_jump(DTYPE_T_JUMP)
-        n_jump = self.h_jump.shape[2]
+        # render structures
+        r_structs = "\n".join([
+            self._compile_struct('t_int_parameters', DTYPE_INTEGRATOR_PARAM),
+            self._compile_struct('t_jump', DTYPE_T_JMP),
+        ])
+
+        # create jump instructions
+        self.create_jmp_instr()
+
         # render R(K) macro content.
+        DEBUG and print_debug("precomiler: generating 1 x H_un, 0 x H_t, {} x jump operations.", self.jmp_n)
         CX_UNITARY = ("KI(K) = $(cfloat_add)(KI(K), $(cfloat_mul)(ihbar, "
-                      "$(cfloat_sub)($(cfloat_mul)(HU(LX, {i}), R({i}, LY)), "
-                      "$(cfloat_mul)(HU({i}, LY), R(LX, {i})))));");
-        CX_JUMP = ("KI(K) = $(cfloat_add)(KI(K), $(cfloat_rmul)(y_0[GID] * (1.0+0.0), "
-                   "$(cfloat_mul)(jb[N_JUMP * __item+{i}].PF, "
-                   "_rky[jb[N_JUMP * __item+{i}].IDX])));")
+                      "$(cfloat_sub)($(cfloat_mul)(HU(__idx, {i}), R({i}, __idy)), "
+                      "$(cfloat_mul)(HU({i}, __idy), R(__idx, {i})))));");
+        CX_JUMP = ("KI(K) = $(cfloat_add)(KI(K), $(cfloat_mul)"
+                   "(jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].PF, "
+                   "_rky[jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].IDX]));")
         r_define_rk = '\\\n    '.join(
             [CX_UNITARY.format(i=r_clint(i)) for i in range(M)]
-            + [CX_JUMP.format(i=r_clint(i)) for i in range(n_jump)])
+            + [CX_JUMP.format(i=r_clint(i)) for i in range(self.jmp_n)])
 
         # render constants
         r_define = '\n'.join('#define {} {}'.format(*df) for df in [
             ('NATURE_HBAR',   r_clfloat(1)),
             ('IN_BLOCK_SIZE', r_clint(M**2)),
             ('THREAD_X',      r_clint(M)),
-            ('N_JUMP',        r_clint(n_jump)),
+            ('N_JUMP',        r_clint(self.jmp_n)),
+            ('N_JUMP2',       r_clint(self.jmp_n**2)),
+            ('HDIM',          r_clint(M)),
+            ('LOCAL_SIZE',    r_clint(self.cl_local_size)),
+            # butcher
+            ('b1', r_clfrac(1.0, 6.0)),
+            ('b2', r_clfrac(4.0, 6.0)),
+            ('b3', r_clfrac(1.0, 6.0)),
+            ('a21', r_clfloat(0.5)),
+            ('a31', r_clfloat(-1.0)),
+            ('a32', r_clfloat(2.0)),
         ])
 
-        src = src.replace('/*{define}*/',  r_define) \
-                 .replace('/*{structs}*/', kenv.render_structs()) \
-                 .replace('/*{R(K)}*/',    r_define_rk)
-        src = r_cltypes(src)
-        print(src)
-       # assert False
-     #   print(src)
-        self.prg = cl.Program(self.ctx, src).build()
+        # render thread layout
+        r_tl = '\n'.join(['int2 _idx[LOCAL_SIZE];'] + [
+           '    _idx[{}] = (int2)({}, {});'.format(k, i, j)
+           for (k, (i, j)) in enumerate((i, j) for i in range(M)
+                                               for j in range(M) if i < j+1)
+        ])
 
+        # render kernel
+        self.c_kernel = r_tmpl(src, define = r_define,
+                                    structs = r_structs,
+                                    rk_macro = r_define_rk,
+                                    tl=r_tl)
 
-    def create_h_jump(self, dtype):
+        DEBUG and print_debug(
+            "generated kernel: {} lines. Compiling...",
+            self.c_kernel.count("\n") + 1)
+        self.prg = cl.Program(self.ctx, self.c_kernel).build()
 
-        # go thru all jumps to create matrix element
-        # interchange stacks for all (i, j) elements of the state.
-        M          = self.system.h0.shape[0]
-        idx        = lambda i, j: M * i + j
-        jelem      = [[] for _ in range(M ** 2)]
-        all_idx    = [(i, j) for i in range(M) for j in range(M)]
-        flat_jumps = self.get_flat_jumps()
-
-        for ((i, j), jump) in itertools.product(all_idx, flat_jumps):
-            w3 = jump['w'][0] ** 3
-            tidx = idx(i, j)
-
-            # A rho Ad
-            jx, jy = jump[np.where(jump['I'][:,1] == i)[0]], \
-                     jump[np.where(jump['I'][:,1] == j)[0]]
-            for j1, j2 in itertools.product(jx, jy):
-                fidx = idx(j1['I'][0], j2['I'][0])
-                jelem[tidx].append((fidx, w3 * j1['d'] * j2['d'].conj()))
-
-            # -1/2 {rho, Ad A}
-            jy = jump[np.where(jump['I'][:,0] == j)[0]]
-            for j2 in jy:
-                for j1 in jump[np.where(jump['I'][:,1] == j2['I'][1])[0]]:
-                    fidx = idx(i, j1['I'][0])
-                    jelem[tidx].append((fidx, -0.5 * w3 * j1['d'].conj() * j2['d']))
-            jx = jump[np.where(jump['I'][:,0] == i)[0]]
-            for j1 in jx:
-                for j2 in jump[np.where(jump['I'][:,1] == j1['I'][1])[0]]:
-                    fidx = idx(j2['I'][0], j)
-                    jelem[tidx].append((fidx, -0.5 * w3 * j1['d'].conj() * j2['d']))
-
-        n_jump = max(len(_) for _ in jelem)
-        h_jump = np.zeros((M, M, max(1, n_jump)), dtype=dtype)
-        for (i, j) in [(i, j) for j in range(M) for i in range(M)]:
-            h_jump[i, j, 0:len(jelem[idx(i, j)])] = jelem[idx(i, j)]
-
-        return h_jump
 
     def get_flat_jumps(self):
         fj = []
@@ -370,7 +197,7 @@ __kernel void opmesolve_rk4_eb(
         if y_0 is not None:
             self.y_0 = vectorize(y_0, dtype=DTYPE_FLOAT)
             assert np.all(self.y_0 >= 0)
-
+        N, M = self.state.shape[0:2]
         self.buf_state = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=self._eb(self.state))
         self.buf_hu = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self._eb(self.state.shape[0]*[self.hu]))
 
@@ -378,8 +205,32 @@ __kernel void opmesolve_rk4_eb(
         if y_0 is None:
             y_0 = [0.0]
         if len(y_0) == 1:
-            y_0 = np.array([y_0] * self.state.shape[0], dtype=DTYPE_FLOAT)
-        self.buf_y0 = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=y_0)
+            y_0 = np.array([y_0] * N, dtype=DTYPE_FLOAT)
+
+        if t_bath is None:
+            t_bath = [0.0]
+        if not isinstance(t_bath, list):
+            t_bath = [t_bath]
+        if len(t_bath) == 1:
+            t_bath = np.array([t_bath] * N, dtype=DTYPE_FLOAT)
+
+        dst = [boson_stat(t) for t in t_bath]
+        cl_jmp = np.zeros((N, *self.jmp_instr.shape), dtype=DTYPE_T_JMP)
+        for i in range(0, len(self.state)):
+            cl_jmp[i]['IDX'] = self.jmp_instr['IDX']
+            cl_jmp[i]['PF'] = y_0[i] \
+                            * self.jmp_instr['PF'] \
+                            * self.jmp_instr['W']**3 \
+                            * (self.jmp_instr['SE'] + dst[i](self.jmp_instr['W']))
+
+        if self.jmp_n == 0 or not self.optimize_jumps:
+            self.h_cl_jmp = cl_jmp
+        else:
+            self.h_cl_jmp = self.cl_jmp_acc_pf(cl_jmp)
+            if DEBUG:
+                dbg = 'optimized h_cl_jmp: old shape {} to new shape {}.'
+                print_debug(dbg.format(cl_jmp.shape, self.h_cl_jmp.shape))
+
 
     def run(self, trange, sync_state=False):
         trange = self.normalize_trange(trange)
@@ -392,11 +243,11 @@ __kernel void opmesolve_rk4_eb(
         self.b_int_param = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=h_int_param)
         b_tstate = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_tstate)
         b_debug = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_debug)
-        b_jump = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_jump)
+        b_jump = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_cl_jmp)
 
         # run
         queue = cl.CommandQueue(self.ctx)
-        bufs = (self.buf_hu, b_jump, self.b_int_param, self.buf_y0, self.buf_state, b_tstate, b_debug)
+        bufs = (self.buf_hu, b_jump, self.b_int_param, self.buf_state, b_tstate, b_debug)
         self.prg.opmesolve_rk4_eb(queue, *self._work_layout(), *bufs)
 
         res_state = np.empty_like(self.state)
@@ -414,21 +265,133 @@ __kernel void opmesolve_rk4_eb(
                           tstate=h_tstate[:] if h_tstate  is not None else None,
                           texpect=texpect[:] if texpect is not None else None)
 
-        pass
+    def create_jmp_instr(self):
+        """ create """
+        M     = self.system.h0.shape[0]
+        idx   = lambda i, j: M * i + j
+        jelem = [[] for _ in range(M ** 2)]
 
+        flat_jumps = self.get_flat_jumps()
+        all_idx    = [(i, j) for i in range(M) for j in range(M)]
+        for ((i, j), jump) in itertools.product(all_idx, flat_jumps):
+            tidx = idx(i, j)
+            w = jump[0]['w']
+            jx, jy = jump[np.where(jump['I'][:,0] == i)[0]], \
+                     jump[np.where(jump['I'][:,0] == j)[0]]
+            for j1, j2 in itertools.product(jx, jy):
+                fidx = idx(j1['I'][1], j2['I'][1])
+                jelem[tidx].append((fidx, j1['d'] * j2['d'].conj(), 1, w)) # A rho Ad
+                jelem[fidx].append((tidx, j1['d'].conj() * j2['d'], 0, w)) # Ad rho A
+
+            # -1/2 {rho, Ad A}
+            jy = jump[np.where(jump['I'][:,1] == j)[0]]
+            for j2 in jy:
+                for j1 in jump[np.where(jump['I'][:,0] == j2['I'][0])[0]]:
+                    fidx = idx(i, j1['I'][1])
+                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 1, w))
+            jx = jump[np.where(jump['I'][:,1] == i)[0]]
+            for j1 in jx:
+                for j2 in jump[np.where(jump['I'][:,0] == j1['I'][0])[0]]:
+                    fidx = idx(j2['I'][1], j)
+                    jelem[tidx].append((fidx, -0.5 * j1['d'] * j2['d'].conj(), 1, w))
+            # XXX -1/2 {rho, A Ad} can be merged with the block above?!
+            jx = jump[np.where(jump['I'][:,0] == i)[0]]
+            for j1 in jx:
+                for j2 in jump[np.where(jump['I'][:,1] == j1['I'][1])[0]]:
+                    fidx = idx(j2['I'][0], j)
+                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 0, w))
+            jy = jump[np.where(jump['I'][:,0] == j)[0]]
+            for j2 in jy:
+                for j1 in jump[np.where(jump['I'][:,1] == j2['I'][1])[0]]:
+                    fidx = idx(i, j1['I'][0])
+                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 0, w))
+
+        # structurize the data as (M, M, n_max_jump) numpy array
+        jmp_n_max = max(len(_) for _ in jelem)
+        jmp_instr = np.zeros((M, M, max(1, jmp_n_max)), dtype=DTYPE_JMP_INSTR)
+        jmp_n_opt = 0
+        for (i, j) in [(i, j) for j in range(M) for i in range(M)]:
+            jmp_instr[i, j, 0:len(jelem[idx(i, j)])] = jelem[idx(i, j)]
+            jmp_n_opt = max(jmp_n_opt, len(set(jmp_instr[i, j, 0:len(jelem[idx(i, j)])]['IDX'])))
+
+        if DEBUG:
+            print_debug("prepared jumps for each work-item. Requires {} operations per work-item.", jmp_n_max)
+            print_debug("the jumps can be optimized such that at most {} operations are required", jmp_n_opt)
+
+        self.jmp_n     = jmp_n_opt if self.optimize_jumps else jmp_n_max
+        self.jmp_instr = jmp_instr
+
+
+    def cl_jmp_acc_pf(self, cl_jmp):
+        """ accumulates prefactors PF for cells with same IDX.
+
+            Example:
+            --------
+
+                [[[[(8,  65.19407   +0.j) (0,  -0.5970355 +0.j) (0,  -0.5970355 +0.j)
+                    (4,   9.252141  +0.j) (0,  -0.62607056+0.j) (0,  -0.62607056+0.j)]
+                   [(1,  -0.5970355 +0.j) (5,   9.252141  +0.j) (1,  -4.6260705 +0.j)
+                    (1,  -0.62607056+0.j) (1,  -0.62607056+0.j) (0,   0.        +0.j)]
+                   [(2, -32.597034  +0.j) (2,  -0.5970355 +0.j) (2,  -4.6260705 +0.j)
+                    (2,  -0.62607056+0.j) (0,   0.        +0.j) (0,   0.        +0.j)]],
+                 ...
+                ]
+
+                is accumulated to to
+
+                [[[[(8,  65.19407  +0.j) (0,  -2.4462123+0.j) (4,   9.252141 +0.j)]
+                   [(1,  -6.475247 +0.j) (5,   9.252141 +0.j) (0,   0.       +0.j)]
+                   [(2, -38.44621  +0.j) (0,   0.       +0.j) (0,   0.       +0.j)]],
+                 ...
+                ]
+        """
+        N, M = self.state.shape[0:2]
+
+        cl_jmp_opt = np.zeros((*cl_jmp.shape[0:3], self.jmp_n), dtype=cl_jmp.dtype)
+        for (k, (i, j)) in itertools.product(range(N), [(i, j) for j in range(M) for i in range(M)]):
+            jcell = cl_jmp[k, i, j]
+            # cells which contribute must have a prefactor
+            jcell0 = jcell[np.where(np.abs(jcell['PF']) > 0)[0]]
+            # all indices of cell items with the same source idx
+            cidx_pf = list(np.where(jcell0['IDX'] == idx)[0] for idx in set(jcell0['IDX']))
+            # accumulate prefactors, assign
+            jcell_acc = list((jcell0[indx[0]]['IDX'], np.sum(jcell0[indx]['PF'])) for indx in cidx_pf)
+            cl_jmp_opt[k, i, j][:len(jcell_acc)] = jcell_acc
+
+        return cl_jmp_opt
 
     def _eb(self, op):
         """ transforms `op` into eigenbase.
             `op` must be ndarray of shape `(M,M)` or `(N,M,M)`
             """
-        return self._mb.conj().T @ op @ self._mb
+        return self._mb.conj() @ op @ self._mb.T
 
 
     def _be(self, op):
         """ transforms `op` back into original basis.
             `op` must be ndarray of shape `(M,M)` or `(N,M,M)`
             """
-        return self._mb @ op @ self._mb.conj().T
+        return self._mb.T @ op @ self._mb.conj()
+
+    def _ctx(self):
+        """ returs the first available gpu content
+            """
+        platforms = cl.get_platforms()
+        assert len(platforms) > 0
+        gpu_devices = list(d for d in platforms[0].get_devices() if d.type == cl.device_type.GPU)
+        assert len(gpu_devices) > 0
+        return cl.Context(devices=gpu_devices)
+
+
+    def _compile_struct(self, name, dtype):
+        """ compiles a `dtype` to c-struct with `name`.
+            """
+        _, c_decl = cl.tools.match_dtype_to_c_struct(
+            self.ctx.devices[0],
+            name,
+            dtype
+        )
+        return c_decl
 
 
     def normalize_trange(self, trange):
@@ -455,7 +418,8 @@ __kernel void opmesolve_rk4_eb(
             and d the dimension of the Hilber space.
             """
         local_size = (1, *self.hu.shape[1:])
-        global_size = (self.state.shape[0], *self.hu.shape[1:])
+        local_size = (1, self.cl_local_size)
+        global_size = (self.state.shape[0], local_size[1])
         return global_size, local_size
 
 
@@ -465,3 +429,146 @@ __kernel void opmesolve_rk4_eb(
             (tr['INT_T0'], tr['INT_DT'], len(np.arange(*tr)))
             for tr in trange
         ], dtype=DTYPE_INTEGRATOR_PARAM)
+
+
+def r_clfloat(f, prec=None):
+    """ renders an OpenCL float representation """
+    if prec is not None:
+        raise NotImplementedError()
+    sf = str(f)
+    return ''.join([sf, '' if '.' in sf else '.', 'f'])
+
+
+def r_clfrac(p, q, prec=None):
+    """ renders an OpenCL fractional representation """
+    return "{}/{}".format(r_clfloat(p, prec), r_clfloat(q, prec))
+
+
+def r_clint(f):
+    """ renders an OpenCL integer representation """
+    assert isinstance(f, int)
+    return str(f)
+
+
+R_CLTYPES_POSTFIX = ['t', 'mul', 'rmul', 'sub', 'new', 'add', 'neg', 'conj', 'fromreal']
+def r_cltypes(src, double_precision=False):
+    """ renders cltype placeholders like $(cfloat_mul), $(float), ...
+        into correpsonding cl identifier depending on whether double
+        precision is on or not.
+
+        Example:
+
+          $(float)      ->       double         Double Precision ON
+          $(float)      ->       float          Double Precision OFF
+
+        """
+    ctype = 'cdouble' if double_precision else 'cfloat'
+    subst = [('$(cfloat_{})'.format(pf), '{}_{}'.format(ctype, pf)) for pf in R_CLTYPES_POSTFIX]
+    subst += [('$(float)', 'double' if double_precision else 'float'), ('$(cf_)', 'cfloat_')]
+    for k, v in subst:
+        src = src.replace(k, v)
+    return src
+
+
+def r_tmpl(src, **kwargs):
+    """ renders a string containing placeholders like
+
+        /*{NAME}*/
+
+        such that it subsitutes `kwargs['NAME']` into it.
+        """
+    for k, v in kwargs.items():
+        src = src.replace('/*{'+k+'}*/', v)
+    src = r_cltypes(src)
+    return src
+
+T_VAL = 'VAL'
+T_VAR = 'VAR'
+T_BINARY_ADD = 'ADD'
+T_BINARY_ADD = 'ADD'
+MODE_BIN = 1
+
+def f2cl_instruction_scalar(instruction):
+    if not isinstance(instruction, dis.Instruction):
+        return instruction
+    elif instruction.opname == "LOAD_CONST":
+        return ('T_VAL', instruction.argval)
+    elif instruction.opname == "LOAD_GLOBAL":
+        return ('T_SYMBOLE', instruction.argval)
+    elif instruction.opname == "LOAD_FAST":
+        return ('T_SYMBOLE', instruction.argval)
+    else:
+        raise ValueError(instruction)
+BIN_MAP = {
+    'BINARY_ADD': '+',
+    'BINARY_MULTIPLY': '*',
+    'BINARY_POWER': '**',
+    'BINARY_SUBTRACT': '-',
+    'BINARY_TRUE_DIVIDE': '/',
+    'BINARY_MODULO': '%',
+}
+
+def f2cl(f):
+    f2cl_ctree_print(f2cl_ctree(f))
+
+
+
+def f2cl_ctree_print(a, l=0):
+    if isinstance(a, dis.Instruction):
+        print(l * ' ' + str(a))
+    elif not isinstance(a, tuple):
+        return '!?'
+    elif a[0] == 'T_FUNC':
+        print(l * ' ' + a[0] + "(" + str(a[1]) + ")")
+        for b in a[2]:
+            f2cl_ctree_print(b, l+1)
+    elif a[0] == 'T_BIN':
+        print(l * ' ' + a[0] + '(' + a[1] + ')')
+        for b in a[2]:
+            f2cl_ctree_print(b, l+1)
+    elif a[0] == 'T_SYMBOLE':
+        print(l * ' ' + a[0] + '(' + str(a[1]) + ')')
+    elif a[0] == 'T_VAL':
+        print(l * ' ' + a[0] + '(<' + str(a[1].__class__.__name__) + '>' + str(a[1]) + ')')
+    elif a[0] == 'T_RETURN':
+        print(l * ' ' + 'T_RETURN')
+        for b in a[1]:
+            f2cl_ctree_print(b, l+1)
+
+def f2cl_ctree(f):
+    mode = MODE_BIN
+    args = []
+    read = []
+    current = None
+    log = []
+
+    for a in dis.get_instructions(f):
+        log.append(a)
+        read.append(a)
+        if a.opname in ['LOAD_CONST']:
+            read[-1] = f2cl_instruction_scalar(a)
+        elif a.opname in ['LOAD_FAST']:
+            read[-1] = f2cl_instruction_scalar(a)
+        elif a.opname in ['LOAD_GLOBAL']:
+            read[-1] = f2cl_instruction_scalar(a)
+        elif a.opname == 'LOAD_ATTR':
+            read[-2] = (read[-2][0], read[-2][1] + '.' + a.argval)
+            read = read[:-1]
+        elif a.opname in BIN_MAP:
+            current = ('T_BIN', BIN_MAP[a.opname], [
+                f2cl_instruction_scalar(read[-3]),
+                f2cl_instruction_scalar(read[-2])])
+            read = read[:-3]
+            read.append(current)
+        elif a.opname == 'CALL_FUNCTION':
+            fargs = read[-a.arg-1:-1]
+            fname = read[-a.arg-2]
+            current = ('T_FUNC', fname, [f2cl_instruction_scalar(fa) for fa in fargs])
+            read = read[:-a.arg-2]
+            read.append(current)
+        elif a.opname == 'RETURN_VALUE':
+            current = ('T_RETURN', [f2cl_instruction_scalar(fa) for fa in read[:-1]])
+        else:
+            raise RuntimeError('did not understand?!\n\n'+'\n'.join('>>> ' + str(l) for l in log))
+
+    return current
