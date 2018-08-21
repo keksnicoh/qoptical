@@ -350,10 +350,13 @@ class OpenCLKernel():
         cl_jmp_opt = np.zeros((*cl_jmp.shape[0:3], self.jmp_n), dtype=cl_jmp.dtype)
         for (k, (i, j)) in itertools.product(range(N), [(i, j) for j in range(M) for i in range(M)]):
             jcell = cl_jmp[k, i, j]
+
             # cells which contribute must have a prefactor
             jcell0 = jcell[np.where(np.abs(jcell['PF']) > 0)[0]]
+
             # all indices of cell items with the same source idx
             cidx_pf = list(np.where(jcell0['IDX'] == idx)[0] for idx in set(jcell0['IDX']))
+
             # accumulate prefactors, assign
             jcell_acc = list((jcell0[indx[0]]['IDX'], np.sum(jcell0[indx]['PF'])) for indx in cidx_pf)
             cl_jmp_opt[k, i, j][:len(jcell_acc)] = jcell_acc
