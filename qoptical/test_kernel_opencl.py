@@ -3,7 +3,7 @@
 """
 from .opme import ReducedSystem, opmesolve
 from .kernel_qutip import QutipKernel
-from .kernel_opencl import OpenCLKernel, f2cl
+from .kernel_opencl import OpenCLKernel
 from .util import ketbra, eigh
 import pytest
 import numpy as np
@@ -457,19 +457,111 @@ def test_four_level_T():
     assert np.all(np.abs(result2.state[0] - resultr.state[0]) < REF_TOL)
     assert np.all(np.abs(result2.state[1] - resultr.state[1]) < REF_TOL)
 
-def derp(x): return 5*x
-def tdest_f2cl():
-    f2cl(lambda: np.sin(5, np.linalg.omg(234,xyt))**2)
-   # f2cl(lambda: 5.0 + 1)
-   # f2cl(lambda x: 5.0 + x + 5)
- #   f2cl(lambda x: 6*sin(x,5,x)+cos(5))
-    #f2cl(lambda x: sin(sin(x + 5, y)))
-    f2cl(lambda x: sin(sin(x + 5, y) * cos(5,sin(-5)*242*a(x)))+blerp())
-    #f2cl(lambda x,y,z: sin(y / 5 - 5 % 3)+x)
-    f2cl(lambda x: x%2)
-   # f2cl(lambda x: x(4))
+def test_two_level_T_driving():
+    """ two level system at finite temperature with
+        time dependent hamiltonian.
+        """
+    REF_TOL = 0.0001
+    OMEGA   = 2.0
+    tr      = (0, 1.0, 0.001)
+    y_0     = 0.5
+    t_bath  = 1.0
+    h0      = [0, 0, 0, OMEGA]
+    states  = [[1.0, 0.0, 0.0, 0.0]] * 3
+    param   = np.array([(0.0, 0.0), (1.0, 2.0), (1.0, 2.5)], dtype=np.dtype([
+        ('A', np.float32, ),
+        ('b', np.float32, ),
+    ]))
 
-  #  f2cl(lambda x: x)
-  #  f2cl(lambda x: x + 5)
-  #  f2cl(lambda x: sin(x, x, 3, 7, x))
-  #  f2cl(lambda x: 5+sin(x))
+    sys = ReducedSystem(h0, tw=[OMEGA])
+
+    kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
+    kernel.t_sysparam = param
+    kernel.ht_coeff = [lambda t, p: p['A'] * np.sin(p['b'] * t)]
+    kernel.compile()
+    print(kernel.c_kernel)
+    #dd()
+    kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=[1, 1, 1, 1])
+    result = kernel.run(tr)
+
+    # reference result
+    resultr = opmesolve(
+        [h0, [[1, 1, 1, 1], kernel.ht_coeff[0]]],
+        states,
+        t_bath=t_bath,
+        y_0=y_0,
+        tw=[OMEGA],
+        tlist=np.arange(*tr),
+        kernel="QuTip",
+        args=param)
+
+    print(np.round(resultr.state[0],5))
+    print(np.round(resultr.state[1],5))
+    print(np.round(resultr.state[2],5))
+
+    print(np.round(result.state[0],5))
+    print(np.round(result.state[1],5))
+    print(np.round(result.state[2],5))
+    # test against reference
+    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)
+
+
+def test_three_level_T_driving():
+    """ two level system at finite temperature with
+        time dependent hamiltonian.
+        """
+    REF_TOL = 0.0001
+    OMEGA   = 2.0
+    tr      = (0, 1.0, 0.001)
+    y_0     = 0.5
+    t_bath  = 1.0
+    h0      = [
+        0, 0, 0,
+        0, OMEGA, 0,
+        0, 0, 4 * OMEGA
+    ]
+    states  = [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]] * 3
+    param   = np.array([(0.0, 0.0), (1.0, 2.0), (1.0, 2.5)], dtype=np.dtype([
+        ('A', np.float32, ),
+        ('b', np.float32, ),
+    ]))
+    htl = [
+        0, 1, 0,
+        1, 0, 1,
+        0, 1, 0,
+    ]
+    sys = ReducedSystem(h0, tw=[OMEGA])
+
+    kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
+    kernel.t_sysparam = param
+    kernel.ht_coeff = [lambda t, p: p['A'] * np.sin(p['b'] * t)]
+    kernel.compile()
+    print(kernel.c_kernel)
+    #dd()[]
+    kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=htl)
+    result = kernel.run(tr)
+
+    # reference result
+    resultr = opmesolve(
+        [h0, [htl, kernel.ht_coeff[0]]],
+        states,
+        t_bath=t_bath,
+        y_0=y_0,
+        tw=[OMEGA],
+        tlist=np.arange(*tr),
+        kernel="QuTip",
+        args=param)
+
+    print(np.round(resultr.state[0],5))
+    print(np.round(resultr.state[1],5))
+    print(np.round(resultr.state[2],5))
+
+    print(np.round(result.state[0],5))
+    print(np.round(result.state[1],5))
+    print(np.round(result.state[2],5))
+    # test against reference
+    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)

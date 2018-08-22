@@ -22,6 +22,7 @@ class QutipKernel():
         self.y_0       = None
         self.htl       = None
         self.hu        = npmat_manylike(self.system.h0, [self.system.h0])
+        self.args      = None
 
         self.e_ops     = None
         # Qobj
@@ -62,7 +63,7 @@ class QutipKernel():
         self.compiled = True
 
 
-    def sync(self, state=None, t_bath=None, y_0=None, hu=None, htl=None, e_ops=None):
+    def sync(self, state=None, t_bath=None, y_0=None, hu=None, htl=None, e_ops=None, args=None):
         """ sync data into kernel environment. """
         assert self.compiled
 
@@ -80,6 +81,9 @@ class QutipKernel():
         if y_0 is not None:
             self.y_0 = vectorize(y_0, dtype=DTYPE_FLOAT)
             assert np.all(self.y_0 >= 0)
+        if args is not None:
+            self.args = args
+            #assert np.all(self.args >= 0)
 
         # XXX todo make observables listable
         if self.system.n_e_ops > 0 and e_ops is not None:
@@ -92,6 +96,7 @@ class QutipKernel():
             self.htl = list(htl)
             assert len(self.htl) == self.system.n_htl
             self.q_htl = [[Qobj(sqmat(ht[0])), ht[1]] for ht in self.htl]
+
 
         # normalize all buffers such that length are the same.
         tb = self.t_bath if self.t_bath is not None else [0.0]
@@ -197,13 +202,19 @@ class QutipKernel():
                 L.append(np.sqrt(y_0 * C(w)) * l)
                 L.append(np.sqrt(y_0 * C(-w)) * l.dag())
 
+            # args
+            args = None
+            if self.args is not None:
+                args = self.args[i] # XXX TEST ME
+
             # mesolve
             Lf  = [l for l in L if not np.allclose(l.full(), 0)]
             H   = [q_hu] + self.q_htl
             res = mesolve(H     = H[0] if len(H) == 1 else H,
                           rho0  = q_s,
                           tlist = tlist,
-                          c_ops = Lf)
+                          c_ops = Lf,
+                          args  = args)
 
             # work with result
             if texpect is not None:

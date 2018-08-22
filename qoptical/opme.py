@@ -141,7 +141,7 @@ class ReducedSystem():
         )
 
 
-def opmesolve(H, rho0, t_bath, y_0, tlist, dipole=None, tw=None, e_ops=[], kernel="QuTip"):
+def opmesolve(H, rho0, t_bath, y_0, tlist, dipole=None, tw=None, e_ops=[], kernel="QuTip", args=None):
 
     if len(H) == 0:
         raise ValueError()
@@ -178,7 +178,8 @@ def opmesolve(H, rho0, t_bath, y_0, tlist, dipole=None, tw=None, e_ops=[], kerne
                 htl=htl,
                 t_bath=t_bath,
                 y_0=y_0,
-                e_ops=e_ops if len(e_ops) else None)
+                e_ops=e_ops if len(e_ops) else None,
+                args=args)
 
     return kernel.run(tlist)
 

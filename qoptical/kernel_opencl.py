@@ -47,6 +47,7 @@ import pyopencl as cl
 import pyopencl.tools
 import numpy as np
 import itertools, os, dis
+from .f2cl import f2cl
 from .settings import *
 from .util import *
 from .result import OpMeResult
@@ -108,6 +109,11 @@ class OpenCLKernel():
 
         self.cl_local_size = None
 
+        # time dependent hamiltonian
+        self.t_sysparam = None
+        self.t_sysparam_name = None
+        self.ht_coeff = None
+
         # the number of jumping instructions due to dissipators
         self.jmp_n = None
 
@@ -119,25 +125,73 @@ class OpenCLKernel():
         M = self.system.h0.shape[0]
         self.cl_local_size = int(M * (M + 1) / 2)
 
+        # create jump instructions
+        self.create_jmp_instr()
+
         # read template
         with open(os.path.join(os.path.dirname(__file__), 'kernel_opencl.tmpl.c')) as f:
             src = f.read()
 
+        # ---- STRUCTS
+
         # render structures
-        r_structs = "\n".join([
+        structs = [
             self._compile_struct('t_int_parameters', DTYPE_INTEGRATOR_PARAM),
             self._compile_struct('t_jump', DTYPE_T_JMP),
-        ])
+        ]
 
-        # create jump instructions
-        self.create_jmp_instr()
+        # ---- SYSTEM PARAMETERS DTYPE
+
+        # system parameters
+        r_arg_sysparam = ""
+        if self.t_sysparam is not None:
+            if not isinstance(self.t_sysparam, np.ndarray):
+                msg = 't_sysparam must be numpy ndarray: {} given'
+                raise ValueError(msg.format(gettype(self.t_sysparam)))
+
+            if DEBUG:
+                msg = "gonna compile system parameters struct as {}."
+                print_debug(msg.format("t_sysparam"))
+
+            structs += self._compile_struct('t_sysparam', self.t_sysparam.dtype),
+            self.t_sysparam_name = "t_sysparam"
+            r_arg_sysparam = "\n    __global const t_sysparam *sysparam,"
+
+        # ---- DYNAMIC HAMILTON
+
+        r_cl_coeff = ""
+        r_htl_priv = ""
+        r_arg_htl = ""
+        r_htl = '#define HTL(T)\\\n   _hu[__item] = _h0[__item];'
+        CX_HTLI = ("_hu[__item] = $(cfloat_add)(_hu[__item], "
+                   "$(cfloat_rmul)(htcoeff{i}(T, sysparam[GID]), "
+                   "htl[{i}]));")
+        if self.ht_coeff is not None:
+            # compile coefficient function to OpenCL
+            r_cl_coeff = "\n".join(
+                f2cl(f, "htcoeff{}".format(i), "t_sysparam")
+                for (i, f) in enumerate(self.ht_coeff))
+
+            # render HTL makro contributions due to H(T)
+            r_htl += '\\\n   ' \
+                   + '\\\n   '.join([CX_HTLI.format(i=i) for i in range(len(self.ht_coeff))])
+
+            # private buffer for matrix elements of H(T)
+            r_htl_priv = "$(cfloat_t) htl[{}];".format(len(self.ht_coeff))
+            for i in range(len(self.ht_coeff)):
+                r_htl_priv += "\n    htl[{i}] = ht{i}[__item];".format(i=i)
+
+                # kernel arguments
+                r_arg_htl  += "\n    __global const $(cfloat_t) *ht{i},".format(i=i)
+
+        # -- MAIN MAKRO
 
         # render R(K) macro content.
         DEBUG and print_debug("precomiler: generating 1 x H_un, 0 x H_t, {} x jump operations.", self.jmp_n)
-        CX_UNITARY = ("KI(K) = $(cfloat_add)(KI(K), $(cfloat_mul)(ihbar, "
+        CX_UNITARY = ("K = $(cfloat_add)(K, $(cfloat_mul)(ihbar, "
                       "$(cfloat_sub)($(cfloat_mul)(HU(__idx, {i}), R({i}, __idy)), "
                       "$(cfloat_mul)(HU({i}, __idy), R(__idx, {i})))));");
-        CX_JUMP = ("KI(K) = $(cfloat_add)(KI(K), $(cfloat_mul)"
+        CX_JUMP = ("K = $(cfloat_add)(K, $(cfloat_mul)"
                    "(jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].PF, "
                    "_rky[jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].IDX]));")
         r_define_rk = '\\\n    '.join(
@@ -170,14 +224,20 @@ class OpenCLKernel():
         ])
 
         # render kernel
-        self.c_kernel = r_tmpl(src, define = r_define,
-                                    structs = r_structs,
-                                    rk_macro = r_define_rk,
-                                    tl=r_tl)
+        self.c_kernel = r_tmpl(src, define       = r_define,
+                                    structs      = "\n".join(structs),
+                                    rk_macro     = r_define_rk,
+                                    arg_sysparam = r_arg_sysparam,
+                                    ht_coeff     = r_cl_coeff,
+                                    htl_priv     = r_htl_priv,
+                                    htl_macro    = r_htl,
+                                    arg_htl      = r_arg_htl,
+                                    tl           = r_tl)
 
         DEBUG and print_debug(
             "generated kernel: {} lines. Compiling...",
             self.c_kernel.count("\n") + 1)
+        print(self.c_kernel)
         self.prg = cl.Program(self.ctx, self.c_kernel).build()
 
 
@@ -192,7 +252,7 @@ class OpenCLKernel():
         return fj
 
 
-    def sync(self, state=None, t_bath=None, y_0=None, hu=None, htl=None, e_ops=None):
+    def sync(self, state=None, t_bath=None, y_0=None, hu=None, htl=None, e_ops=None, sysparam=None):
         self.state = npmat_manylike(self.system.h0, state)
         if y_0 is not None:
             self.y_0 = vectorize(y_0, dtype=DTYPE_FLOAT)
@@ -200,6 +260,18 @@ class OpenCLKernel():
         N, M = self.state.shape[0:2]
         self.buf_state = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=self._eb(self.state))
         self.buf_hu = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self._eb(self.state.shape[0]*[self.hu]))
+
+        self.h_sysparam = None
+        self.b_sysparam = None
+        if self.t_sysparam is not None and sysparam is not None:
+            self.h_sysparam = sysparam
+            self.b_sysparam = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=sysparam)
+
+        self.h_htl = None
+        self.b_htl = None
+        if htl is not None:
+            self.h_htl = np.array(htl, dtype=np.complex64)
+            self.b_htl = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_htl)
 
         y_0 = self.y_0
         if y_0 is None:
@@ -247,7 +319,13 @@ class OpenCLKernel():
 
         # run
         queue = cl.CommandQueue(self.ctx)
-        bufs = (self.buf_hu, b_jump, self.b_int_param, self.buf_state, b_tstate, b_debug)
+        bufs = (self.buf_hu, )
+        if self.b_htl is not None:
+            bufs += (self.b_htl, )
+        bufs += (b_jump, self.b_int_param, )
+        if self.b_sysparam is not None:
+            bufs += (self.b_sysparam, )
+        bufs += (self.buf_state, b_tstate, b_debug)
         self.prg.opmesolve_rk4_eb(queue, *self._work_layout(), *bufs)
 
         res_state = np.empty_like(self.state)
@@ -275,44 +353,45 @@ class OpenCLKernel():
         all_idx    = [(i, j) for i in range(M) for j in range(M)]
         for ((i, j), jump) in itertools.product(all_idx, flat_jumps):
             tidx = idx(i, j)
-            w = jump[0]['w']
             jx, jy = jump[np.where(jump['I'][:,0] == i)[0]], \
                      jump[np.where(jump['I'][:,0] == j)[0]]
             for j1, j2 in itertools.product(jx, jy):
                 fidx = idx(j1['I'][1], j2['I'][1])
-                jelem[tidx].append((fidx, j1['d'] * j2['d'].conj(), 1, w)) # A rho Ad
-                jelem[fidx].append((tidx, j1['d'].conj() * j2['d'], 0, w)) # Ad rho A
+                jelem[tidx].append((fidx, j1['d'] * j2['d'].conj(), 1, j1['w'])) # A rho Ad
+                jelem[fidx].append((tidx, j1['d'].conj() * j2['d'], 0, j1['w'])) # Ad rho A
 
             # -1/2 {rho, Ad A}
             jy = jump[np.where(jump['I'][:,1] == j)[0]]
             for j2 in jy:
                 for j1 in jump[np.where(jump['I'][:,0] == j2['I'][0])[0]]:
                     fidx = idx(i, j1['I'][1])
-                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 1, w))
+                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 1, j1['w']))
             jx = jump[np.where(jump['I'][:,1] == i)[0]]
             for j1 in jx:
                 for j2 in jump[np.where(jump['I'][:,0] == j1['I'][0])[0]]:
                     fidx = idx(j2['I'][1], j)
-                    jelem[tidx].append((fidx, -0.5 * j1['d'] * j2['d'].conj(), 1, w))
-            # XXX -1/2 {rho, A Ad} can be merged with the block above?!
+                    jelem[tidx].append((fidx, -0.5 * j1['d'] * j2['d'].conj(), 1, j1['w']))
+            # -1/2 {rho, A Ad}
+            # XXX can be merged with the block above?!
             jx = jump[np.where(jump['I'][:,0] == i)[0]]
             for j1 in jx:
                 for j2 in jump[np.where(jump['I'][:,1] == j1['I'][1])[0]]:
                     fidx = idx(j2['I'][0], j)
-                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 0, w))
+                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 0, j1['w']))
             jy = jump[np.where(jump['I'][:,0] == j)[0]]
             for j2 in jy:
                 for j1 in jump[np.where(jump['I'][:,1] == j2['I'][1])[0]]:
                     fidx = idx(i, j1['I'][0])
-                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 0, w))
+                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 0, j1['w']))
 
         # structurize the data as (M, M, n_max_jump) numpy array
         jmp_n_max = max(len(_) for _ in jelem)
         jmp_instr = np.zeros((M, M, max(1, jmp_n_max)), dtype=DTYPE_JMP_INSTR)
         jmp_n_opt = 0
         for (i, j) in [(i, j) for j in range(M) for i in range(M)]:
-            jmp_instr[i, j, 0:len(jelem[idx(i, j)])] = jelem[idx(i, j)]
-            jmp_n_opt = max(jmp_n_opt, len(set(jmp_instr[i, j, 0:len(jelem[idx(i, j)])]['IDX'])))
+            l = len(jelem[idx(i, j)])
+            jmp_instr[i,j,:l] = jelem[idx(i, j)]
+            jmp_n_opt = max(jmp_n_opt, len(set(jmp_instr[i,j,:l]['IDX'])))
 
         if DEBUG:
             print_debug("prepared jumps for each work-item. Requires {} operations per work-item.", jmp_n_max)
@@ -485,93 +564,3 @@ def r_tmpl(src, **kwargs):
     src = r_cltypes(src)
     return src
 
-T_VAL = 'VAL'
-T_VAR = 'VAR'
-T_BINARY_ADD = 'ADD'
-T_BINARY_ADD = 'ADD'
-MODE_BIN = 1
-
-def f2cl_instruction_scalar(instruction):
-    if not isinstance(instruction, dis.Instruction):
-        return instruction
-    elif instruction.opname == "LOAD_CONST":
-        return ('T_VAL', instruction.argval)
-    elif instruction.opname == "LOAD_GLOBAL":
-        return ('T_SYMBOLE', instruction.argval)
-    elif instruction.opname == "LOAD_FAST":
-        return ('T_SYMBOLE', instruction.argval)
-    else:
-        raise ValueError(instruction)
-BIN_MAP = {
-    'BINARY_ADD': '+',
-    'BINARY_MULTIPLY': '*',
-    'BINARY_POWER': '**',
-    'BINARY_SUBTRACT': '-',
-    'BINARY_TRUE_DIVIDE': '/',
-    'BINARY_MODULO': '%',
-}
-
-def f2cl(f):
-    f2cl_ctree_print(f2cl_ctree(f))
-
-
-
-def f2cl_ctree_print(a, l=0):
-    if isinstance(a, dis.Instruction):
-        print(l * ' ' + str(a))
-    elif not isinstance(a, tuple):
-        return '!?'
-    elif a[0] == 'T_FUNC':
-        print(l * ' ' + a[0] + "(" + str(a[1]) + ")")
-        for b in a[2]:
-            f2cl_ctree_print(b, l+1)
-    elif a[0] == 'T_BIN':
-        print(l * ' ' + a[0] + '(' + a[1] + ')')
-        for b in a[2]:
-            f2cl_ctree_print(b, l+1)
-    elif a[0] == 'T_SYMBOLE':
-        print(l * ' ' + a[0] + '(' + str(a[1]) + ')')
-    elif a[0] == 'T_VAL':
-        print(l * ' ' + a[0] + '(<' + str(a[1].__class__.__name__) + '>' + str(a[1]) + ')')
-    elif a[0] == 'T_RETURN':
-        print(l * ' ' + 'T_RETURN')
-        for b in a[1]:
-            f2cl_ctree_print(b, l+1)
-
-def f2cl_ctree(f):
-    mode = MODE_BIN
-    args = []
-    read = []
-    current = None
-    log = []
-
-    for a in dis.get_instructions(f):
-        log.append(a)
-        read.append(a)
-        if a.opname in ['LOAD_CONST']:
-            read[-1] = f2cl_instruction_scalar(a)
-        elif a.opname in ['LOAD_FAST']:
-            read[-1] = f2cl_instruction_scalar(a)
-        elif a.opname in ['LOAD_GLOBAL']:
-            read[-1] = f2cl_instruction_scalar(a)
-        elif a.opname == 'LOAD_ATTR':
-            read[-2] = (read[-2][0], read[-2][1] + '.' + a.argval)
-            read = read[:-1]
-        elif a.opname in BIN_MAP:
-            current = ('T_BIN', BIN_MAP[a.opname], [
-                f2cl_instruction_scalar(read[-3]),
-                f2cl_instruction_scalar(read[-2])])
-            read = read[:-3]
-            read.append(current)
-        elif a.opname == 'CALL_FUNCTION':
-            fargs = read[-a.arg-1:-1]
-            fname = read[-a.arg-2]
-            current = ('T_FUNC', fname, [f2cl_instruction_scalar(fa) for fa in fargs])
-            read = read[:-a.arg-2]
-            read.append(current)
-        elif a.opname == 'RETURN_VALUE':
-            current = ('T_RETURN', [f2cl_instruction_scalar(fa) for fa in read[:-1]])
-        else:
-            raise RuntimeError('did not understand?!\n\n'+'\n'.join('>>> ' + str(l) for l in log))
-
-    return current
