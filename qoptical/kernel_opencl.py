@@ -92,20 +92,20 @@ class OpenCLKernel():
     def __init__(self, system, ctx=None):
         """ create QutipKernel for given ``system`` """
         # api state
-        self.system    = system
-        self.state     = None
-        self.t_bath    = None
-        self.y_0       = None
-        self.htl       = None
+        self.system = system
+        self.state  = None
+        self.t_bath = None
+        self.y_0    = None
+        self.htl    = None
 
         self.optimize_jumps = True
 
         # generated kernel c code
         self.c_kernel = None
-        self.hu        = npmat_manylike(self.system.h0, [self.system.h0])
-        self.ctx       = ctx or self._ctx()
-        self.ev        = self.system.ev
-        self._mb       = np.array(self.system.s, dtype=self.system.s.dtype)
+        self.hu       = npmat_manylike(self.system.h0, [self.system.h0])
+        self.ctx      = ctx or self._ctx()
+        self.ev       = self.system.ev
+        self._mb      = np.array(self.system.s, dtype=self.system.s.dtype)
 
         self.cl_local_size = None
 
@@ -252,8 +252,33 @@ class OpenCLKernel():
         return fj
 
 
-    def sync(self, state=None, t_bath=None, y_0=None, hu=None, htl=None, e_ops=None, sysparam=None):
+    def sync(self,
+             state=None,
+             t_bath=None,
+             y_0=None,
+             hu=None,
+             htl=None,
+             e_ops=None,
+             sysparam=None):
         self.state = npmat_manylike(self.system.h0, state)
+        # XXX normalize:
+        # self.t_bath
+        # self.y_0
+        # self.hu
+        # self.htl
+        # self.e_ops
+        # self.sysparam
+        #
+        #
+        #
+        # XXX final buffer
+        # self.h_hu
+        # self.h_htl
+        # self.h_state
+        # self.h_sysparam
+        # self.h_cl_jump
+        #
+
         if y_0 is not None:
             self.y_0 = vectorize(y_0, dtype=DTYPE_FLOAT)
             assert np.all(self.y_0 >= 0)
@@ -424,20 +449,24 @@ class OpenCLKernel():
                  ...
                 ]
         """
-        N, M = self.state.shape[0:2]
-
+        N, M       = self.state.shape[0:2]
         cl_jmp_opt = np.zeros((*cl_jmp.shape[0:3], self.jmp_n), dtype=cl_jmp.dtype)
-        for (k, (i, j)) in itertools.product(range(N), [(i, j) for j in range(M) for i in range(M)]):
+        allidx     = [(i, j) for j in range(M) for i in range(M)]
+        for (k, (i, j)) in itertools.product(range(N), allidx):
             jcell = cl_jmp[k, i, j]
 
             # cells which contribute must have a prefactor
             jcell0 = jcell[np.where(np.abs(jcell['PF']) > 0)[0]]
 
             # all indices of cell items with the same source idx
-            cidx_pf = list(np.where(jcell0['IDX'] == idx)[0] for idx in set(jcell0['IDX']))
+            cidx_pf = list(
+                np.where(jcell0['IDX'] == idx)[0]
+                for idx in set(jcell0['IDX']))
 
             # accumulate prefactors, assign
-            jcell_acc = list((jcell0[indx[0]]['IDX'], np.sum(jcell0[indx]['PF'])) for indx in cidx_pf)
+            jcell_acc = list(
+                (jcell0[indx[0]]['IDX'], np.sum(jcell0[indx]['PF']))
+                for indx in cidx_pf)
             cl_jmp_opt[k, i, j][:len(jcell_acc)] = jcell_acc
 
         return cl_jmp_opt
@@ -545,10 +574,17 @@ def r_cltypes(src, double_precision=False):
 
         """
     ctype = 'cdouble' if double_precision else 'cfloat'
-    subst = [('$(cfloat_{})'.format(pf), '{}_{}'.format(ctype, pf)) for pf in R_CLTYPES_POSTFIX]
-    subst += [('$(float)', 'double' if double_precision else 'float'), ('$(cf_)', 'cfloat_')]
+    subst = [
+        ('$(cfloat_{})'.format(pf), '{}_{}'.format(ctype, pf))
+        for pf in R_CLTYPES_POSTFIX]
+    subst += [
+        ('$(float)', 'double' if double_precision else 'float'),
+        ('$(cf_)', 'cfloat_'),
+    ]
+
     for k, v in subst:
         src = src.replace(k, v)
+
     return src
 
 

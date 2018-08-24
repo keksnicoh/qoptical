@@ -2,18 +2,20 @@
 """ test the f2cl module
     :author: keksnicoh
 """
-import pytest
 from . import f2cl
 import numpy as np
 import math
 import pyopencl as cl
 import pyopencl.tools
-from numpy import cos
+import pytest
 
 devices     = cl.get_platforms()[0].get_devices()
 gpu_devices = list(d for d in devices if d.type == cl.device_type.GPU)
 ctx         = cl.Context(devices=gpu_devices)
 queue       = cl.CommandQueue(ctx)
+
+test_scalar_float = 1.3
+test_scalar_int   = 2
 
 @pytest.mark.parametrize("f", [
     lambda t: 1.0,
@@ -37,9 +39,12 @@ queue       = cl.CommandQueue(ctx)
     lambda t: math.acos(t),
     lambda t: math.atan(t),
     lambda t: np.sin(t)*2-1+3*np.cos(np.cos(t*t)),
+    # scalar from globals
+    lambda t: test_scalar_int * t / test_scalar_float
 ])
 def test_f2cl(f):
     r_clf = f2cl.f2cl(f, "bork_from_ork")
+
     # compile
     try:
         prg = cl.Program(ctx, r_clf + """
