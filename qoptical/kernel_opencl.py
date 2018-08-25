@@ -75,20 +75,18 @@ class OpenCLKernel():
     """ kernel code file name """
     TEMPLATE_NAME = 'kernel_opencl.tmpl.c'
 
-    """ before creating the final jump instructions this
-        dtype is used to create a non-optimized buffer.
-        when all jumps are analyzed, this data is accumulated
-        together to an optimized buffer (See `cl_jmp_acc_pf`)
+    """ before creating the final jump instructions (`DTYPE_T_JMP`),
+        this dtype is used to create a non-optimized buffer.
+        when all jumps are analyzed the resulting buffer is
+        accumulated (grouped by IDX column) to get the final
+        contribution of a matrix element into the work-item.
+        (See `cl_jmp_acc_pf`)
         """
     DTYPE_JUMP_RAW = np.dtype([
-        # source idx
-        ('IDX', np.int32),
-        # prefactor (dipole)
-        ('PF', DTYPE_COMPLEX),
-        # sponanious emission
-        ('SE', np.int32),
-        # transition frequency
-        ('W', DTYPE_FLOAT),
+        ('IDX', np.int32),     # source idx
+        ('PF', DTYPE_COMPLEX), # prefactor (dipole)
+        ('SE', np.int32),      # sponanious emission (1 or 0)
+        ('W', DTYPE_FLOAT),    # transition frequency
     ])
 
     """ instruction to add a matrix element rho[IDX]
@@ -97,8 +95,10 @@ class OpenCLKernel():
         contribution from a matrix element into the
         work-item's matrx element.
         """
-    DTYPE_T_JMP = np.dtype([('IDX', np.int32), ('PF', DTYPE_COMPLEX),])
-
+    DTYPE_T_JMP = np.dtype([
+        ('IDX', np.int32),
+        ('PF', DTYPE_COMPLEX),
+    ])
 
     def __init__(self, system, ctx=None, queue=None):
         """ create QutipKernel for given ``system`` """
@@ -427,6 +427,7 @@ class OpenCLKernel():
                           tstate=h_tstate[:] if h_tstate  is not None else None,
                           texpect=texpect[:] if texpect is not None else None)
 
+
     def create_jmp_instr(self):
         """ create """
         M     = self.system.h0.shape[0]
@@ -528,6 +529,7 @@ class OpenCLKernel():
 
         return cl_jmp_opt
 
+
     def _eb(self, op):
         """ transforms `op` into eigenbase.
             `op` must be ndarray of shape `(M,M)` or `(N,M,M)`
@@ -540,6 +542,7 @@ class OpenCLKernel():
             `op` must be ndarray of shape `(M,M)` or `(N,M,M)`
             """
         return self._mb.T @ op @ self._mb.conj()
+
 
     def _ctx(self):
         """ returs the first available gpu content
@@ -643,6 +646,6 @@ def r_tmpl(src, **kwargs):
         """
     for k, v in kwargs.items():
         src = src.replace('/*{'+k+'}*/', v)
-    src = r_cltypes(src)
-    return src
+
+    return r_cltypes(src)
 
