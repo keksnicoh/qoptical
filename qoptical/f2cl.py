@@ -185,6 +185,8 @@ def f2cl_expr(ctree, glb):
 
 
     raise NotImplementedError(str(ctree))
+
+
 def ctree_print(a, l=0):
     """ for debuging purpose: visualizes
         a ctree in a nested multi line
@@ -244,14 +246,16 @@ def create_ctree(f):
             #   the moment.
             raise NotImplementedError('Only one line expressions are allowed. Sryy')
 
-        if a.opname in ['LOAD_CONST', 'LOAD_FAST', 'LOAD_GLOBAL']:
+        elif a.opname in ['LOAD_CONST', 'LOAD_FAST', 'LOAD_GLOBAL']:
             read.append(instruction_scalar(a))
 
         elif a.opname == 'LOAD_ATTR':
             read[-1] = (read[-1][0], read[-1][1] + '.' + a.argval)
 
         elif a.opname == 'BINARY_SUBSCR':
-            read.append((T_DICT, read[-2], instruction_scalar(read[-1])))
+            current = (T_DICT, read[-2], instruction_scalar(read[-1]))
+            read = read[:-2]
+            read.append(current)
 
         elif a.opname == 'COMPARE_OP':
             # XXX

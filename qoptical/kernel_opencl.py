@@ -60,36 +60,47 @@ DTYPE_TIME_RANGE = np.dtype([
     ('INT_DT', np.float32),
 ])
 
-
 DTYPE_INTEGRATOR_PARAM = np.dtype([
     ('INT_T0', np.float32),
     ('INT_DT', np.float32),
     ('INT_N',  np.int32),
 ])
 
-# a jump within the OpenCL kernel:
-# it contains the matrix-element id IDX which should be
-# added into the cell by a prefactor PF
-DTYPE_T_JMP = np.dtype([
-    ('IDX', np.int32),
-    ('PF', DTYPE_COMPLEX),
-])
-
-# a single jump instruction
-DTYPE_JMP_INSTR = np.dtype([
-    # source idx
-    ('IDX', np.int32),
-    # prefactor (dipole)
-    ('PF', DTYPE_COMPLEX),
-    # sponanious emission
-    ('SE', np.int32),
-    # transition frequency
-    ('W', DTYPE_FLOAT),
-])
 
 class OpenCLKernel():
+    """ Renders & compiles an OpenCL GPU kernel to
+        integrate Quantum Optical Master Eqaution.
+        """
 
-    def __init__(self, system, ctx=None):
+    """ kernel code file name """
+    TEMPLATE_NAME = 'kernel_opencl.tmpl.c'
+
+    """ before creating the final jump instructions this
+        dtype is used to create a non-optimized buffer.
+        when all jumps are analyzed, this data is accumulated
+        together to an optimized buffer (See `cl_jmp_acc_pf`)
+        """
+    DTYPE_JUMP_RAW = np.dtype([
+        # source idx
+        ('IDX', np.int32),
+        # prefactor (dipole)
+        ('PF', DTYPE_COMPLEX),
+        # sponanious emission
+        ('SE', np.int32),
+        # transition frequency
+        ('W', DTYPE_FLOAT),
+    ])
+
+    """ instruction to add a matrix element rho[IDX]
+        by a given, complex, prefactor. This is the final
+        (and optimized) representation of the dissipator
+        contribution from a matrix element into the
+        work-item's matrx element.
+        """
+    DTYPE_T_JMP = np.dtype([('IDX', np.int32), ('PF', DTYPE_COMPLEX),])
+
+
+    def __init__(self, system, ctx=None, queue=None):
         """ create QutipKernel for given ``system`` """
         # api state
         self.system = system
@@ -104,6 +115,7 @@ class OpenCLKernel():
         self.c_kernel = None
         self.hu       = npmat_manylike(self.system.h0, [self.system.h0])
         self.ctx      = ctx or self._ctx()
+        self.queue    = queue or cl.CommandQueue(self.ctx)
         self.ev       = self.system.ev
         self._mb      = np.array(self.system.s, dtype=self.system.s.dtype)
 
@@ -122,28 +134,68 @@ class OpenCLKernel():
 
 
     def compile(self):
+        """ renders OpenCL kernel from given state and reduced
+            system. Since the kernel renders code depending on
+            the jump-layout it must be known at compile-time and
+            cannot be changed without recompile. Currently, only
+            one jump layout and only one set of time dependent
+            Hamiltons are supported.
+            XXX: support set of timedependent hamilton matrices
+                 per system.
+
+            In this approach, the kernel is designed to be "branchless".
+            This may lead to sume unnecessary assignments.
+
+            After compilation the rendered kernel code is accessible
+            via the `OpenCLKernel.c_kernel`.
+
+            """
         M = self.system.h0.shape[0]
         self.cl_local_size = int(M * (M + 1) / 2)
 
-        # create jump instructions
+        # create jump instructions. Since the number of instructions
+        # depends on the jumping instructions we need to calculate
+        # them at this early stage.
         self.create_jmp_instr()
 
         # read template
-        with open(os.path.join(os.path.dirname(__file__), 'kernel_opencl.tmpl.c')) as f:
+        tpl_path = os.path.join(
+            os.path.dirname(__file__),
+            self.__class__.TEMPLATE_NAME)
+        with open(tpl_path) as f:
             src = f.read()
+
+        # ------ Initialize Rendering Parts
+
+        # coefficient functions
+        r_cl_coeff = ""
+        # private buffer time dependent hamilton
+        # matrix element allocations
+        r_htl_priv = ""
+        # kernel arguments for time dependent
+        # hamilton buffer
+        r_arg_htl = ""
+        # macro to refresh the value of time dependent
+        # hamilton at a specific time.
+        r_htl = ""
+        # system parameters kernel argument
+        r_arg_sysparam = ""
+        # macro containg full dynamics at each timestep.
+        r_define_rk = ""
+        # rendered constants
+        r_define = ""
+        # thread layout
+        r_tl = ""
 
         # ---- STRUCTS
 
-        # render structures
         structs = [
             self._compile_struct('t_int_parameters', DTYPE_INTEGRATOR_PARAM),
-            self._compile_struct('t_jump', DTYPE_T_JMP),
+            self._compile_struct('t_jump',           self.__class__.DTYPE_T_JMP),
         ]
 
         # ---- SYSTEM PARAMETERS DTYPE
 
-        # system parameters
-        r_arg_sysparam = ""
         if self.t_sysparam is not None:
             if not isinstance(self.t_sysparam, np.ndarray):
                 msg = 't_sysparam must be numpy ndarray: {} given'
@@ -159,46 +211,48 @@ class OpenCLKernel():
 
         # ---- DYNAMIC HAMILTON
 
-        r_cl_coeff = ""
-        r_htl_priv = ""
-        r_arg_htl = ""
         r_htl = '#define HTL(T)\\\n   _hu[__item] = _h0[__item];'
-        CX_HTLI = ("_hu[__item] = $(cfloat_add)(_hu[__item], "
-                   "$(cfloat_rmul)(htcoeff{i}(T, sysparam[GID]), "
-                   "htl[{i}]));")
         if self.ht_coeff is not None:
+            n_htl = len(self.ht_coeff)
             # compile coefficient function to OpenCL
             r_cl_coeff = "\n".join(
                 f2cl(f, "htcoeff{}".format(i), "t_sysparam")
                 for (i, f) in enumerate(self.ht_coeff))
 
             # render HTL makro contributions due to H(T)
+            cx = ("_hu[__item] = $(cfloat_add)(_hu[__item], "
+                  "$(cfloat_rmul)(htcoeff{i}(T, sysparam[GID]), "
+                  "htl[{i}]));")
             r_htl += '\\\n   ' \
-                   + '\\\n   '.join([CX_HTLI.format(i=i) for i in range(len(self.ht_coeff))])
+                   + '\\\n   '.join([cx.format(i=i) for i in range(n_htl)])
 
             # private buffer for matrix elements of H(T)
-            r_htl_priv = "$(cfloat_t) htl[{}];".format(len(self.ht_coeff))
-            for i in range(len(self.ht_coeff)):
-                r_htl_priv += "\n    htl[{i}] = ht{i}[__item];".format(i=i)
+            cx = "htl[{i}] = ht{i}[__item];"
+            r_htl_priv = "$(cfloat_t) htl[{}];".format(len(self.ht_coeff)) \
+                       + '\n    ' \
+                       + '\n    '.join(cx.format(i=i) for i in range(n_htl))
 
-                # kernel arguments
-                r_arg_htl  += "\n    __global const $(cfloat_t) *ht{i},".format(i=i)
+            # kernel arguments
+            cx = "__global const $(cfloat_t) *ht{i},"
+            r_arg_htl = '\n    ' \
+                      + '\n    '.join(cx.format(i=i) for i in range(n_htl))
 
         # -- MAIN MAKRO
 
         # render R(K) macro content.
         DEBUG and print_debug("precomiler: generating 1 x H_un, 0 x H_t, {} x jump operations.", self.jmp_n)
-        CX_UNITARY = ("K = $(cfloat_add)(K, $(cfloat_mul)(ihbar, "
+        cx_unitary = ("K = $(cfloat_add)(K, $(cfloat_mul)(ihbar, "
                       "$(cfloat_sub)($(cfloat_mul)(HU(__idx, {i}), R({i}, __idy)), "
                       "$(cfloat_mul)(HU({i}, __idy), R(__idx, {i})))));");
-        CX_JUMP = ("K = $(cfloat_add)(K, $(cfloat_mul)"
+        cx_jump = ("K = $(cfloat_add)(K, $(cfloat_mul)"
                    "(jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].PF, "
                    "_rky[jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].IDX]));")
         r_define_rk = '\\\n    '.join(
-            [CX_UNITARY.format(i=r_clint(i)) for i in range(M)]
-            + [CX_JUMP.format(i=r_clint(i)) for i in range(self.jmp_n)])
+            [cx_unitary.format(i=r_clint(i)) for i in range(M)]
+            + [cx_jump.format(i=r_clint(i)) for i in range(self.jmp_n)])
 
-        # render constants
+        # -- Contants
+
         r_define = '\n'.join('#define {} {}'.format(*df) for df in [
             ('NATURE_HBAR',   r_clfloat(1)),
             ('IN_BLOCK_SIZE', r_clint(M**2)),
@@ -208,22 +262,23 @@ class OpenCLKernel():
             ('HDIM',          r_clint(M)),
             ('LOCAL_SIZE',    r_clint(self.cl_local_size)),
             # butcher
-            ('b1', r_clfrac(1.0, 6.0)),
-            ('b2', r_clfrac(4.0, 6.0)),
-            ('b3', r_clfrac(1.0, 6.0)),
-            ('a21', r_clfloat(0.5)),
-            ('a31', r_clfloat(-1.0)),
-            ('a32', r_clfloat(2.0)),
+            ('b1',            r_clfrac(1.0, 6.0)),
+            ('b2',            r_clfrac(4.0, 6.0)),
+            ('b3',            r_clfrac(1.0, 6.0)),
+            ('a21',           r_clfloat(0.5)),
+            ('a31',           r_clfloat(-1.0)),
+            ('a32',           r_clfloat(2.0)),
         ])
 
-        # render thread layout
+        # -- Thread Layout
+
         r_tl = '\n'.join(['int2 _idx[LOCAL_SIZE];'] + [
            '    _idx[{}] = (int2)({}, {});'.format(k, i, j)
            for (k, (i, j)) in enumerate((i, j) for i in range(M)
-                                               for j in range(M) if i < j+1)
-        ])
+                                               for j in range(M) if i < j+1)])
 
-        # render kernel
+        # -- compile full kernel
+
         self.c_kernel = r_tmpl(src, define       = r_define,
                                     structs      = "\n".join(structs),
                                     rk_macro     = r_define_rk,
@@ -237,7 +292,7 @@ class OpenCLKernel():
         DEBUG and print_debug(
             "generated kernel: {} lines. Compiling...",
             self.c_kernel.count("\n") + 1)
-        print(self.c_kernel)
+
         self.prg = cl.Program(self.ctx, self.c_kernel).build()
 
 
@@ -260,6 +315,7 @@ class OpenCLKernel():
              htl=None,
              e_ops=None,
              sysparam=None):
+
         self.state = npmat_manylike(self.system.h0, state)
         # XXX normalize:
         # self.t_bath
@@ -312,7 +368,7 @@ class OpenCLKernel():
             t_bath = np.array([t_bath] * N, dtype=DTYPE_FLOAT)
 
         dst = [boson_stat(t) for t in t_bath]
-        cl_jmp = np.zeros((N, *self.jmp_instr.shape), dtype=DTYPE_T_JMP)
+        cl_jmp = np.zeros((N, *self.jmp_instr.shape), dtype=self.__class__.DTYPE_T_JMP)
         for i in range(0, len(self.state)):
             cl_jmp[i]['IDX'] = self.jmp_instr['IDX']
             cl_jmp[i]['PF'] = y_0[i] \
@@ -335,28 +391,31 @@ class OpenCLKernel():
         res_len = max(r['INT_N'] for r in h_int_param)
 
         h_tstate = np.zeros((res_len, *self.state.shape), dtype=self.state.dtype)
-        h_debug = -np.ones(res_len + 2, dtype=np.float32)
+        h_debug  = -np.ones(res_len + 2, dtype=np.float32)
 
-        self.b_int_param = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=h_int_param)
-        b_tstate = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_tstate)
-        b_debug = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_debug)
-        b_jump = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_cl_jmp)
+        b_int_param = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=h_int_param)
+        b_tstate    = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_tstate)
+        b_debug     = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_debug)
+        b_jump      = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_cl_jmp)
 
-        # run
-        queue = cl.CommandQueue(self.ctx)
+        # create argument buffer tuple
         bufs = (self.buf_hu, )
         if self.b_htl is not None:
             bufs += (self.b_htl, )
-        bufs += (b_jump, self.b_int_param, )
+        bufs += (b_jump, b_int_param, )
         if self.b_sysparam is not None:
             bufs += (self.b_sysparam, )
         bufs += (self.buf_state, b_tstate, b_debug)
-        self.prg.opmesolve_rk4_eb(queue, *self._work_layout(), *bufs)
+
+        # run
+        work_layout = (self.state.shape[0], self.cl_local_size), \
+                      (1, self.cl_local_size)
+        self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *bufs)
 
         res_state = np.empty_like(self.state)
-        cl.enqueue_copy(queue, res_state, self.buf_state)
-        cl.enqueue_copy(queue, h_tstate, b_tstate)
-        cl.enqueue_copy(queue, h_debug, b_debug)
+        cl.enqueue_copy(self.queue, res_state, self.buf_state)
+        cl.enqueue_copy(self.queue, h_tstate, b_tstate)
+        cl.enqueue_copy(self.queue, h_debug, b_debug)
 
         h_tstate = self._be(h_tstate.reshape(((res_len, *self.state.shape))))
         h_state = self._be(res_state)
@@ -411,7 +470,7 @@ class OpenCLKernel():
 
         # structurize the data as (M, M, n_max_jump) numpy array
         jmp_n_max = max(len(_) for _ in jelem)
-        jmp_instr = np.zeros((M, M, max(1, jmp_n_max)), dtype=DTYPE_JMP_INSTR)
+        jmp_instr = np.zeros((M, M, max(1, jmp_n_max)), dtype=self.__class__.DTYPE_JUMP_RAW)
         jmp_n_opt = 0
         for (i, j) in [(i, j) for j in range(M) for i in range(M)]:
             l = len(jelem[idx(i, j)])
@@ -452,21 +511,19 @@ class OpenCLKernel():
         N, M       = self.state.shape[0:2]
         cl_jmp_opt = np.zeros((*cl_jmp.shape[0:3], self.jmp_n), dtype=cl_jmp.dtype)
         allidx     = [(i, j) for j in range(M) for i in range(M)]
+
         for (k, (i, j)) in itertools.product(range(N), allidx):
+            # contributing cell indices
             jcell = cl_jmp[k, i, j]
-
-            # cells which contribute must have a prefactor
             jcell0 = jcell[np.where(np.abs(jcell['PF']) > 0)[0]]
-
-            # all indices of cell items with the same source idx
-            cidx_pf = list(
+            cidx = list(
                 np.where(jcell0['IDX'] == idx)[0]
                 for idx in set(jcell0['IDX']))
 
             # accumulate prefactors, assign
             jcell_acc = list(
                 (jcell0[indx[0]]['IDX'], np.sum(jcell0[indx]['PF']))
-                for indx in cidx_pf)
+                for indx in cidx)
             cl_jmp_opt[k, i, j][:len(jcell_acc)] = jcell_acc
 
         return cl_jmp_opt
@@ -521,17 +578,6 @@ class OpenCLKernel():
         if len(trange) != len(self.state):
             raise ValueError()
         return trange
-
-
-    def _work_layout(self):
-        """ returns a global layout of `(N, (d, d))` and a local
-            layout of `(1, (d, d))` where `N` is the number of systems
-            and d the dimension of the Hilber space.
-            """
-        local_size = (1, *self.hu.shape[1:])
-        local_size = (1, self.cl_local_size)
-        global_size = (self.state.shape[0], local_size[1])
-        return global_size, local_size
 
 
     def _create_int_param(self, trange):
