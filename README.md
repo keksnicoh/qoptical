@@ -6,8 +6,10 @@ within optical regime.
 ## Roadmap
 
 - Defining an API using QuTip `mesolve` as reference.
-- Implement a second kernel using plain numpy operation (also as reference).
 - Implement an OpenCL kernel to parallelize the system in eigenbase on GPU.
+- Perform several tests with different system and create documentation
+- Implement TwoTimeCorrelation function solver
+- Implement Spectral Density
 
 ## run tests
 
