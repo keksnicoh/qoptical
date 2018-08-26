@@ -104,8 +104,10 @@ def vectorize(x, dtype=None):
         x = np.array([x])
 
     assert len(x.shape) == 1, 'input must have trivial shape.'
-    return x if dtype is None else x.astype(dtype)
-
+    try:
+        return x if dtype is None else x.astype(dtype)
+    except TypeError:
+        raise RuntimeError('could not vectorize {} as dtype {}'.format(x, dtype))
 
 def unvectorize(x):
 
@@ -193,3 +195,9 @@ def nparr_manylike(a, b, dtype):
                 a.shape[0], b.shape[0]))
 
     return b
+
+class InconsistentVectorSizeError(Exception):
+    def __init__(self, msg, vectors):
+        self.vectors = vectors
+        description = "\n".join("    {:10}: {}".format(v[0], v[1].shape) for v in vectors)
+        super().__init__("{}:\n{}".format(msg, description))

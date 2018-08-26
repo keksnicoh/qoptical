@@ -52,6 +52,7 @@ from .settings import *
 from .util import *
 from .result import OpMeResult
 
+
 mf = cl.mem_flags
 
 DTYPE_TIME_RANGE = np.dtype([
@@ -65,6 +66,10 @@ DTYPE_INTEGRATOR_PARAM = np.dtype([
     ('INT_DT', np.float32),
     ('INT_N',  np.int32),
 ])
+
+
+def opmesolve_opencl():
+    pass
 
 
 class OpenCLKernel():
@@ -100,37 +105,60 @@ class OpenCLKernel():
         ('PF', DTYPE_COMPLEX),
     ])
 
-    def __init__(self, system, ctx=None, queue=None):
+    def __init__(self, system, ctx=None, queue=None, t_sysparam=None, optimize_jumps=True):
         """ create QutipKernel for given ``system`` """
-        # api state
-        self.system = system
-        self.state  = None
-        self.t_bath = None
-        self.y_0    = None
-        self.htl    = None
 
-        self.optimize_jumps = True
+        self.system         = system
+        self.optimize_jumps = optimize_jumps
+        self.t_sysparam     = t_sysparam
+        self.ctx            = ctx or self._ctx()
+        self.queue          = queue or cl.CommandQueue(self.ctx)
 
-        # generated kernel c code
-        self.c_kernel = None
-        self.hu       = npmat_manylike(self.system.h0, [self.system.h0])
-        self.ctx      = ctx or self._ctx()
-        self.queue    = queue or cl.CommandQueue(self.ctx)
-        self.ev       = self.system.ev
-        self._mb      = np.array(self.system.s, dtype=self.system.s.dtype)
+        self.ev  = None # eigh
+        self._mb = None # base transformation matrix
 
-        self.cl_local_size = None
+        self.c_kernel      = None # generated kernel c code
+        self.cl_local_size = None # due to hermicity we only need M*(M+1)/2 work-items
+                                  # where M is dimH
 
         # time dependent hamiltonian
-        self.t_sysparam = None
         self.t_sysparam_name = None
-        self.ht_coeff = None
+        self.ht_coeff        = None
 
-        # the number of jumping instructions due to dissipators
-        self.jmp_n = None
+        self.jmp_n     = None # the number of jumping instructions due to dissipators
+        self.jmp_instr = None # jumping instructions for all cells
 
-        # jumping instructions for all cells
-        self.jmp_instr = None
+        # synced, vectorized state
+        self.hu       = None
+        self.state    = None
+        self.t_bath   = None
+        self.y_0      = None
+        self.htl      = None
+        self.sysparam = None
+
+        # host buffers and gpu buffers
+        self.h_sysparam = None
+        self.h_htl      = None
+        self.h_hu       = None
+        self.h_state    = None
+        self.h_cl_jmp   = None
+        self.h_y_0      = None
+        self.h_t_bath   = None
+        self.h_cl_jmp   = None
+        self.b_htl      = None
+        self.b_sysparam = None
+        self.b_hu       = None
+        self.b_state    = None
+        self.b_cl_jmp   = None
+
+        self.init()
+
+
+    def init(self):
+        """ implicit initialization """
+        self.hu  = npmat_manylike(self.system.h0, [self.system.h0])
+        self.ev  = self.system.ev
+        self._mb = np.array(self.system.s, dtype=self.system.s.dtype)
 
 
     def compile(self):
@@ -197,15 +225,15 @@ class OpenCLKernel():
         # ---- SYSTEM PARAMETERS DTYPE
 
         if self.t_sysparam is not None:
-            if not isinstance(self.t_sysparam, np.ndarray):
-                msg = 't_sysparam must be numpy ndarray: {} given'
-                raise ValueError(msg.format(gettype(self.t_sysparam)))
+            if not isinstance(self.t_sysparam, np.dtype):
+                msg = 't_sysparam must be numpy.dtype: {} given'
+                raise ValueError(msg.format(type(self.t_sysparam)))
 
             if DEBUG:
                 msg = "gonna compile system parameters struct as {}."
                 print_debug(msg.format("t_sysparam"))
 
-            structs += self._compile_struct('t_sysparam', self.t_sysparam.dtype),
+            structs += self._compile_struct('t_sysparam', self.t_sysparam),
             self.t_sysparam_name = "t_sysparam"
             r_arg_sysparam = "\n    __global const t_sysparam *sysparam,"
 
@@ -296,96 +324,61 @@ class OpenCLKernel():
         self.prg = cl.Program(self.ctx, self.c_kernel).build()
 
 
-    def get_flat_jumps(self):
-        fj = []
-        for nw, jumps in enumerate(self.system.get_jumps()):
-            if jumps is None:
-                continue
-            jumps = jumps.reshape((int(len(jumps) / (nw+1)), nw+1))
-            for jump in jumps:
-                fj.append(jump)
-        return fj
+    def sync(self, state=None, t_bath=None, y_0=None,
+             hu=None, htl=None, sysparam=None):
+        """ sync data into gpu buffers. All host buffers are either
+            one-component data (single valued) or some kind of vector.
+            If vectors are given, they must have the same length or a
+            length of 1. The single component buffers are then normalized
+            to the length of the non-single component buffers.
 
+            :arg state:    initial state (rho_0)
+            :arg t_bath:   bath temperatures
+            :arg y_0:      damping coefficients
+            :arg hu:       unitary stationary hams
+            :arg htl:      unitary non-stationary hams
+            :arg sysparam: system parameters (used by htl coefficient functions)
 
-    def sync(self,
-             state=None,
-             t_bath=None,
-             y_0=None,
-             hu=None,
-             htl=None,
-             e_ops=None,
-             sysparam=None):
-
-        self.state = npmat_manylike(self.system.h0, state)
-        # XXX normalize:
-        # self.t_bath
-        # self.y_0
-        # self.hu
-        # self.htl
-        # self.e_ops
-        # self.sysparam
-        #
-        #
-        #
-        # XXX final buffer
-        # self.h_hu
-        # self.h_htl
-        # self.h_state
-        # self.h_sysparam
-        # self.h_cl_jump
-        #
+            """
+        if state is not None:
+            self.state = npmat_manylike(self.system.h0, state)
 
         if y_0 is not None:
             self.y_0 = vectorize(y_0, dtype=DTYPE_FLOAT)
             assert np.all(self.y_0 >= 0)
-        N, M = self.state.shape[0:2]
-        self.buf_state = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=self._eb(self.state))
-        self.buf_hu = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self._eb(self.state.shape[0]*[self.hu]))
 
-        self.h_sysparam = None
-        self.b_sysparam = None
-        if self.t_sysparam is not None and sysparam is not None:
-            self.h_sysparam = sysparam
-            self.b_sysparam = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=sysparam)
+        if t_bath is not None:
+            self.t_bath = vectorize(t_bath, dtype=DTYPE_FLOAT)
+            assert np.all(self.t_bath >= 0)
 
-        self.h_htl = None
-        self.b_htl = None
+        if hu is not None:
+            self.hu = npmat_manylike(self.system.h0, hu)
+
+        if sysparam is not None:
+            self.sysparam = vectorize(sysparam, dtype=self.t_sysparam)
+
+        self.normalize_vbuffers()
+
+        # if y_0 and t_bath is normalized we can create the jumping
+        # instructions buffer.
+        if self.h_y_0 is not None and self.h_t_bath is not None:
+            DEBUG and print_debug('compute jumping structure...')
+            self.h_cl_jmp = self.create_h_cl_jmp()
+            self.b_cl_jmp = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_cl_jmp)
+
+        #XXX
         if htl is not None:
             self.h_htl = np.array(htl, dtype=np.complex64)
             self.b_htl = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_htl)
 
-        y_0 = self.y_0
-        if y_0 is None:
-            y_0 = [0.0]
-        if len(y_0) == 1:
-            y_0 = np.array([y_0] * N, dtype=DTYPE_FLOAT)
-
-        if t_bath is None:
-            t_bath = [0.0]
-        if not isinstance(t_bath, list):
-            t_bath = [t_bath]
-        if len(t_bath) == 1:
-            t_bath = np.array([t_bath] * N, dtype=DTYPE_FLOAT)
-
-        dst = [boson_stat(t) for t in t_bath]
-        cl_jmp = np.zeros((N, *self.jmp_instr.shape), dtype=self.__class__.DTYPE_T_JMP)
-        for i in range(0, len(self.state)):
-            cl_jmp[i]['IDX'] = self.jmp_instr['IDX']
-            cl_jmp[i]['PF'] = y_0[i] \
-                            * self.jmp_instr['PF'] \
-                            * self.jmp_instr['W']**3 \
-                            * (self.jmp_instr['SE'] + dst[i](self.jmp_instr['W']))
-
-        if self.jmp_n == 0 or not self.optimize_jumps:
-            self.h_cl_jmp = cl_jmp
-        else:
-            self.h_cl_jmp = self.cl_jmp_acc_pf(cl_jmp)
-            if DEBUG:
-                dbg = 'optimized h_cl_jmp: old shape {} to new shape {}.'
-                print_debug(dbg.format(cl_jmp.shape, self.h_cl_jmp.shape))
-
-
     def run(self, trange, sync_state=False):
+
+        assert self.h_t_bath is not None, "t_bath was not synced."
+        assert self.h_y_0 is not None,    "y_0 was not synced."
+        assert self.h_state is not None,  "state was not synced."
+        assert self.h_hu is not None,     "hu was not synced."
+        assert self.h_cl_jmp is not None, "h_cl_jmp was not synced."
+
         trange = self.normalize_trange(trange)
         h_int_param = self._create_int_param(trange)
         res_len = max(r['INT_N'] for r in h_int_param)
@@ -396,16 +389,15 @@ class OpenCLKernel():
         b_int_param = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=h_int_param)
         b_tstate    = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_tstate)
         b_debug     = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_debug)
-        b_jump      = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_cl_jmp)
 
         # create argument buffer tuple
-        bufs = (self.buf_hu, )
+        bufs = (self.b_hu, )
         if self.b_htl is not None:
             bufs += (self.b_htl, )
-        bufs += (b_jump, b_int_param, )
+        bufs += (self.b_cl_jmp, b_int_param, )
         if self.b_sysparam is not None:
             bufs += (self.b_sysparam, )
-        bufs += (self.buf_state, b_tstate, b_debug)
+        bufs += (self.b_state, b_tstate, b_debug)
 
         # run
         work_layout = (self.state.shape[0], self.cl_local_size), \
@@ -413,7 +405,7 @@ class OpenCLKernel():
         self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *bufs)
 
         res_state = np.empty_like(self.state)
-        cl.enqueue_copy(self.queue, res_state, self.buf_state)
+        cl.enqueue_copy(self.queue, res_state, self.b_state)
         cl.enqueue_copy(self.queue, h_tstate, b_tstate)
         cl.enqueue_copy(self.queue, h_debug, b_debug)
 
@@ -426,6 +418,85 @@ class OpenCLKernel():
                           state=h_state[:] if res_state  is not None else None,
                           tstate=h_tstate[:] if h_tstate  is not None else None,
                           texpect=texpect[:] if texpect is not None else None)
+
+
+    def normalize_vectors(self, vector_names):
+        vectors = [(name, getattr(self, name))
+            for name in vector_names
+            if getattr(self, name) is not None]
+        vlens = set([v[1].shape[0] for v in vectors])
+        if len(vlens) > 2:
+            raise InconsistentVectorSizeError("too many different vector dimensions", vectors)
+
+        if len(vlens) == 2:
+            vl_min, vl_max = min(vlens), max(vlens)
+            if vl_min != 1 and vl_max != 1:
+                msg = ("sryy cannot normalize {} dimensions vs. {}"
+                       " dimensions. One dimension must be 1 to be normalizable.")
+                raise InconsistentVectorSizeError(msg.format(vl_min, vl_max), vectors)
+
+            return {n: v if v.shape[0] == vl_max else np.array([v] * vl_max, dtype=v.dtype)
+                for (n, v) in vectors}
+        else:
+            return dict(vectors)
+
+
+    def get_flat_jumps(self):
+        fj = []
+        for nw, jumps in enumerate(self.system.get_jumps()):
+            if jumps is None:
+                continue
+            jumps = jumps.reshape((int(len(jumps) / (nw+1)), nw+1))
+            for jump in jumps:
+                fj.append(jump)
+        return fj
+
+
+    def normalize_vbuffers(self):
+        """ normalized vectorized buffers such that they have
+            all the same number of components. This method will
+            only normalize the allready synced buffers. """
+        vnorm = self.normalize_vectors(['state', 'y_0', 't_bath', 'hu', 'sysparam'])
+        if 'state' in vnorm:
+            self.h_state = self._eb(vnorm['state'])
+            self.b_state = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=self.h_state)
+
+        if 'hu' in vnorm:
+            self.h_hu = self._eb(vnorm['hu'])
+            self.b_hu = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_hu)
+
+        if 'sysparam' in vnorm:
+            self.h_sysparam = vnorm['sysparam']
+            self.b_sysparam = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_sysparam)
+
+        if 'y_0' in vnorm:
+            self.h_y_0 = vnorm['y_0']
+
+        if 't_bath' in vnorm:
+            self.h_t_bath = vnorm['t_bath']
+
+
+    def create_h_cl_jmp(self):
+        """ create cl_jmp host buffer """
+        N, M = self.state.shape[0:2]
+        dst = [boson_stat(t) for t in self.h_t_bath]
+        cl_jmp = np.zeros((N, *self.jmp_instr.shape), dtype=self.__class__.DTYPE_T_JMP)
+        for i in range(0, len(self.state)):
+            cl_jmp[i]['IDX'] = self.jmp_instr['IDX']
+            cl_jmp[i]['PF'] = self.h_y_0[i] \
+                            * self.jmp_instr['PF'] \
+                            * self.jmp_instr['W']**3 \
+                            * (self.jmp_instr['SE'] + dst[i](self.jmp_instr['W']))
+
+        if self.jmp_n == 0 or not self.optimize_jumps:
+            return cl_jmp
+        else:
+            optimized = self.cl_jmp_acc_pf(cl_jmp)
+            if DEBUG:
+                dbg = 'optimized h_cl_jmp: old shape {} to new shape {}.'
+                print_debug(dbg.format(cl_jmp.shape, cl_jmp.shape))
+
+            return optimized
 
 
     def create_jmp_instr(self):
