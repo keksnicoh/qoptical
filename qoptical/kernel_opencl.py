@@ -50,6 +50,7 @@ import itertools, os, dis
 from .f2cl import f2cl
 from .settings import *
 from .util import *
+from time import time
 
 mf = cl.mem_flags
 
@@ -158,7 +159,15 @@ class OpenCLKernel():
         self.hu  = npmat_manylike(self.system.h0, [self.system.h0])
         self.ev  = self.system.ev
         self._mb = np.array(self.system.s, dtype=self.system.s.dtype)
-        DEBUG and print_debug('whopaa! whos there? Compile me, give me data and I\'ll calculate 4u')
+        if DEBUG:
+            # because everyone likes ascii cats
+            print_debug("")
+            print_debug('whopaa! whos there?                 ,-""""""-.                 v0.0');
+            print_debug("                                 /\j__/\  (  \`--.");
+            print_debug("Compile me,                      \`@_@'/  _)  >--.`.");
+            print_debug("give me data                    _{{.:Y:_}}_{{{{_,'    ) )");
+            print_debug("and I'll work that out 4u!     {{_}}`-^{{_}} ```     (_/");
+            print_debug("")
 
     def compile(self):
         """ renders OpenCL kernel from given state and reduced
@@ -402,12 +411,15 @@ class OpenCLKernel():
         bufs += (b_tstate, )
 
         # run
+        t0 = time()
         work_layout = (self.h_state.shape[0], self.cl_local_size), \
                       (1, self.cl_local_size)
         DEBUG and print_debug("run kernel global={}, local={}".format(*work_layout))
         self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *bufs)
         cl.enqueue_copy(self.queue, h_tstate, b_tstate)
         self.queue.finish()
+        tf = time()
+        DEBUG and print_debug("took {}s".format(tf - t0))
 
         # in case one of the assertions below blow up, one can
         # access the result via this attribute.
@@ -545,6 +557,7 @@ class OpenCLKernel():
                     jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 0, j1['w']))
 
         # structurize the data as (M, M, n_max_jump) numpy array
+        jmp_n     = len(flat_jumps)
         jmp_n_max = max(len(_) for _ in jelem)
         jmp_instr = np.zeros((M, M, max(1, jmp_n_max)), dtype=self.__class__.DTYPE_JUMP_RAW)
         jmp_n_opt = 0
@@ -554,8 +567,10 @@ class OpenCLKernel():
             jmp_n_opt = max(jmp_n_opt, len(set(jmp_instr[i,j,:l]['IDX'])))
 
         if DEBUG:
-            print_debug("prepared jumps for each work-item. Requires {} operations per work-item.", jmp_n_max)
-            print_debug("the jumps can be optimized such that at most {} operations are required", jmp_n_opt)
+            msg = "prepared {} jumps. Require {} operations per work-item."
+            print_debug(msg, jmp_n, jmp_n_max)
+            msg = "the jumps can be optimized such that at most {} operations are required"
+            print_debug(msg, jmp_n_opt)
 
         self.jmp_n     = jmp_n_opt if self.optimize_jumps else jmp_n_max
         self.jmp_instr = jmp_instr
