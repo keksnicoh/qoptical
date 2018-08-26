@@ -419,7 +419,7 @@ class OpenCLKernel():
         cl.enqueue_copy(self.queue, h_tstate, b_tstate)
         self.queue.finish()
         tf = time()
-        DEBUG and print_debug("took {}s".format(tf - t0))
+        DEBUG and print_debug("1/1 calculated {} steps, took {:.4f}s".format(h_tstate.shape[0:2], tf - t0))
 
         # in case one of the assertions below blow up, one can
         # access the result via this attribute.
