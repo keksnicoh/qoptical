@@ -370,6 +370,7 @@ class OpenCLKernel():
             self.h_htl = np.array(htl, dtype=np.complex64)
             self.b_htl = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_htl)
 
+
     def run(self, trange):
         """ runs the current synced state for given tranges
             and returns the list of states at each time step.
