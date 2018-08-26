@@ -19,17 +19,13 @@ __kernel void opmesolve_rk4_eb(
     __global const $(cfloat_t) *hu,/*{arg_htl}*/
     __global const t_jump *jb,
     __global const t_int_parameters *int_parameters,/*{arg_sysparam}*/
-    __global $(cfloat_t) *rho,
-    __global $(cfloat_t) *result,
-    __global $(float) *test_buffer
+    __global $(cfloat_t) *result
 ) {
     $(float) t;
     int n;
     /*{tl}*/
     $(cfloat_t) ihbar = $(cfloat_new)(0.0f, -1.0f / NATURE_HBAR);
-
     $(cfloat_t) k1, k2, k3, _rho;
-
     __local $(cfloat_t) _hu[IN_BLOCK_SIZE];
     __local $(cfloat_t) _h0[IN_BLOCK_SIZE];
     __local $(cfloat_t) _rky[IN_BLOCK_SIZE];
@@ -46,14 +42,10 @@ __kernel void opmesolve_rk4_eb(
 
     // init local memory
     prm          = int_parameters[GID];
-    _rho         = rho[__in_offset + __item];
+    _rho         = result[__in_offset + __item]; // t=0
     _h0[__item]  = hu[__in_offset + __item];
     _h0[__itemT] = hu[__in_offset + __itemT];
     /*{htl_priv}*/
-
-    // t=0
-    result[__in_offset + __item] = _rho;
-    result[__in_offset + __itemT] = $(cfloat_conj)(_rho);
 
     // loop init
     t  = prm.INT_T0;
@@ -94,9 +86,7 @@ __kernel void opmesolve_rk4_eb(
         _rho.imag += prm.INT_DT * (b1 * k1.imag + b2 * k2.imag + b3 * k3.imag);
         result[__out_len * n + __in_offset + __item] = _rho;
         result[__out_len * n + __in_offset + __itemT] = $(cfloat_conj)(_rho);
-
+        barrier(CLK_LOCAL_MEM_FENCE);
         t = prm.INT_T0 + (++n) * prm.INT_DT;
     }
-    rho[__in_offset + __item] = _rho;
-    rho[__in_offset + __itemT] = $(cfloat_conj)(_rho);
 }

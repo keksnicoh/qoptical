@@ -50,8 +50,6 @@ import itertools, os, dis
 from .f2cl import f2cl
 from .settings import *
 from .util import *
-from .result import OpMeResult
-
 
 mf = cl.mem_flags
 
@@ -148,8 +146,9 @@ class OpenCLKernel():
         self.b_htl      = None
         self.b_sysparam = None
         self.b_hu       = None
-        self.b_state    = None
         self.b_cl_jmp   = None
+
+        self.result = None
 
         self.init()
 
@@ -371,24 +370,25 @@ class OpenCLKernel():
             self.h_htl = np.array(htl, dtype=np.complex64)
             self.b_htl = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_htl)
 
-    def run(self, trange, sync_state=False):
-
+    def run(self, trange):
+        """ runs the current synced state for given tranges
+            and returns the list of states at each time step.
+            """
         assert self.h_t_bath is not None, "t_bath was not synced."
         assert self.h_y_0 is not None,    "y_0 was not synced."
         assert self.h_state is not None,  "state was not synced."
         assert self.h_hu is not None,     "hu was not synced."
         assert self.h_cl_jmp is not None, "h_cl_jmp was not synced."
+        assert_rho_hermitian(self.h_state)
+        trace0 = np.trace(self.h_state, axis1=1, axis2=2)
 
-        trange = self.normalize_trange(trange)
+        trange      = self.normalize_trange(trange)
         h_int_param = self._create_int_param(trange)
-        res_len = max(r['INT_N'] for r in h_int_param)
-
-        h_tstate = np.zeros((res_len, *self.state.shape), dtype=self.state.dtype)
-        h_debug  = -np.ones(res_len + 2, dtype=np.float32)
-
+        res_len     = max(r['INT_N'] for r in h_int_param)
+        h_tstate    = np.zeros((res_len, *self.state.shape), dtype=self.state.dtype)
+        h_tstate[0] = self.h_state # rho at t=0
         b_int_param = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=h_int_param)
         b_tstate    = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_tstate)
-        b_debug     = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_debug)
 
         # create argument buffer tuple
         bufs = (self.b_hu, )
@@ -397,27 +397,28 @@ class OpenCLKernel():
         bufs += (self.b_cl_jmp, b_int_param, )
         if self.b_sysparam is not None:
             bufs += (self.b_sysparam, )
-        bufs += (self.b_state, b_tstate, b_debug)
+        bufs += (b_tstate, )
 
         # run
         work_layout = (self.state.shape[0], self.cl_local_size), \
                       (1, self.cl_local_size)
         self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *bufs)
-
-        res_state = np.empty_like(self.state)
-        cl.enqueue_copy(self.queue, res_state, self.b_state)
         cl.enqueue_copy(self.queue, h_tstate, b_tstate)
-        cl.enqueue_copy(self.queue, h_debug, b_debug)
 
-        h_tstate = self._be(h_tstate.reshape(((res_len, *self.state.shape))))
-        h_state = self._be(res_state)
+        # in case one of the assertions below blow up, one can
+        # access the result via this attribute.
+        self.result = h_tstate
 
-        texpect = None
-        # copy date to avoid references
-        return OpMeResult(tlist=[np.arange(*r) for r in h_int_param],
-                          state=h_state[:] if res_state  is not None else None,
-                          tstate=h_tstate[:] if h_tstate  is not None else None,
-                          texpect=texpect[:] if texpect is not None else None)
+        # check whether the t=0 state was used correctly.
+        assert np.allclose(self.h_state, h_tstate[0]), "state corrupted."
+
+        # check density operator properties
+        assert_tstate_rho_hermitian(h_tstate)
+        assert_tstate_rho_trace(trace0, h_tstate)
+
+        # transform state into original basis.
+        state_basis = self._be(h_tstate.reshape(((res_len, *self.state.shape))))
+        return state_basis
 
 
     def normalize_vectors(self, vector_names):
@@ -459,7 +460,6 @@ class OpenCLKernel():
         vnorm = self.normalize_vectors(['state', 'y_0', 't_bath', 'hu', 'sysparam'])
         if 'state' in vnorm:
             self.h_state = self._eb(vnorm['state'])
-            self.b_state = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=self.h_state)
 
         if 'hu' in vnorm:
             self.h_hu = self._eb(vnorm['hu'])
@@ -720,3 +720,19 @@ def r_tmpl(src, **kwargs):
 
     return r_cltypes(src)
 
+def assert_rho_hermitian(state):
+    idx = np.where(np.abs(np.transpose(state, (00, 2, 1)).conj() - state) > 0.000001)[0]
+    assert len(idx) == 0, "safety abort - state[{}] not hermitian".format(idx[0])
+
+
+def assert_tstate_rho_hermitian(ts):
+    idx = np.where(np.abs(np.transpose(ts, (0, 1, 3, 2)).conj() - ts) > 0.0001)[0]
+    if len(idx) != 0:
+        state = ts[idx[0]]
+        sidx = np.where(np.abs(np.transpose(state, (0, 2, 1)).conj() - state) > 0.000001)[0]
+        assert False, "safety abort - result[{},{}] not hermitian".format(idx[0], sidx[0])
+
+
+def assert_tstate_rho_trace(expected, ts):
+    trace = np.trace(ts, axis1=2, axis2=3)
+    assert np.allclose(trace, expected), "safety abort - trace changed."

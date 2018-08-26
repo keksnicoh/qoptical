@@ -57,7 +57,7 @@ def test_von_neumann():
            0, 0, 0, 0,
            0, 0, 0, 0,]
     kernel.sync(state=[ground_state, gs2], t_bath=0, y_0=0)
-    result = kernel.run(tr)
+    ts = kernel.run(tr)
 
     # Debug:
     #qkernel = QutipKernel(system)
@@ -66,7 +66,6 @@ def test_von_neumann():
     #result = qkernel.run(np.arange(*tr))
     #print(np.round(result.state, 2))
 
-    ts = result.tstate
     assert tstate_rho_hermitian(ts)
     assert tstate_rho_trace(1.0, ts)
 
@@ -95,9 +94,6 @@ def test_von_neumann():
         PRECISION_DT_ANGLE
     )
     assert np.all(r32 == expect_w32 * tr[2])
-
-    # test result data
-    assert np.allclose(result.state, result.tstate[-1])
 
 
 def tstate_rho_hermitian(ts):
@@ -142,25 +138,19 @@ def test_von_neumann_basis():
     kernel = OpenCLKernel(system)
     kernel.compile()
     kernel.sync(state=states, y_0=0, t_bath=0)
-    result = kernel.run(tr)
+    ts = kernel.run(tr)
 
     # test density operator
-    ts = result.tstate
     assert tstate_rho_hermitian(ts[1:2])
     assert tstate_rho_trace(1.0, ts)
 
-    # test result data
-    assert np.allclose(result.state, result.tstate[-1])
-
-    print(np.round(result.state[0], 4))
-    print(np.round(rho1, 4))
     # test stationary state
-   # assert np.allclose(result.state[0], rho1)
+    assert np.allclose(ts[-1][0], rho1)
 
     # test against reference
     resultr = opmesolve(h0, states, 0, 0, tw=[], tlist=np.arange(*tr), kernel="QuTip")
-    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
 
 def test_two_level_TZero():
     """ most simple dissipative case.
@@ -189,15 +179,15 @@ def test_two_level_TZero():
     kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
     kernel.compile()
     kernel.sync(state=states, y_0=y_0, t_bath=0)
-    result = kernel.run(tr)
+    ts = kernel.run(tr)
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=0, y_0=y_0, tw=[OMEGA], tlist=np.arange(*tr), kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][2] - resultr.state[2]) < REF_TOL)
 
 def test_three_level_TZero():
     """ two different annihilation processes A(Omega), A(2*Omega) at T=0:
@@ -238,15 +228,15 @@ def test_three_level_TZero():
     kernel = OpenCLKernel(sys)
     kernel.compile()
     kernel.sync(state=states, y_0=1.0, t_bath=0)
-    result = kernel.run(tr)
+    ts = kernel.run(tr)
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=0, y_0=1.0, tw=tw, tlist=np.arange(*tr), kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][2] - resultr.state[2]) < REF_TOL)
 
 
 def test_four_level_TZero():
@@ -286,22 +276,22 @@ def test_four_level_TZero():
     kernel = OpenCLKernel(sys)
     kernel.compile()
     kernel.sync(state=states, y_0=0.15, t_bath=0)
-    result = kernel.run(tr)
+    ts = kernel.run(tr)
 
     kernel2 = OpenCLKernel(sys)
     kernel2.optimize_jumps = False
     kernel2.compile()
     kernel2.sync(state=states, y_0=0.15, t_bath=0)
-    result2 = kernel2.run(tr)
+    ts2 = kernel2.run(tr)
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=0, y_0=0.15, tlist=np.arange(*tr), kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(result2.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result2.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts2[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts2[-1][1] - resultr.state[1]) < REF_TOL)
 
 
 def test_two_level_T():
@@ -341,15 +331,14 @@ def test_two_level_T():
     kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
     kernel.compile()
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath)
-    result = kernel.run(tr)
-
+    ts = kernel.run(tr)
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tw=[OMEGA], tlist=np.arange(*tr), kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
 
 def test_three_level_T():
     """ three level system at finite temperature.
@@ -393,15 +382,15 @@ def test_three_level_T():
     assert kernel.optimize_jumps
     kernel.compile()
     kernel.sync(state=states, y_0=1.0, t_bath=t_bath)
-    result = kernel.run(tr)
+    ts = kernel.run(tr)
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=t_bath, y_0=1.0, tw=tw, tlist=np.arange(*tr), kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][2] - resultr.state[2]) < REF_TOL)
 
 def test_four_level_T():
     """ four level system at finite temperature T
@@ -432,7 +421,7 @@ def test_four_level_T():
     ], [
         # some weird state
         0.4, 0.4, 0.6, 0.3,
-        0.4, 0.3, 0.2, 0.1,
+        0.4, 0.3, 0.2, 0.2,
         0.6, 0.2, 0.1, 0.6,
         0.3, 0.2, 0.6, 0.2,
     ]]
@@ -442,22 +431,22 @@ def test_four_level_T():
     kernel.optimize_jumps = True
     kernel.compile()
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath)
-    result = kernel.run(tr)
+    ts = kernel.run(tr)
 
     kernel2 = OpenCLKernel(sys)
     kernel2.optimize_jumps = False
     kernel2.compile()
     kernel2.sync(state=states, y_0=y_0, t_bath=t_bath)
-    result2 = kernel2.run(tr)
+    ts2 = kernel2.run(tr)
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tlist=np.arange(*tr), kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(result2.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result2.state[1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts2[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts2[-1][1] - resultr.state[1]) < REF_TOL)
 
 
 def test_two_level_T_driving():
@@ -489,7 +478,7 @@ def test_two_level_T_driving():
     kernel.compile()
 
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=[1, 1, 1, 1])
-    result = kernel.run(tr)
+    ts = kernel.run(tr)
 
     # reference result
     resultr = opmesolve(
@@ -503,9 +492,9 @@ def test_two_level_T_driving():
         args=param)
 
     # test against reference
-    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][2] - resultr.state[2]) < REF_TOL)
 
 
 def test_three_level_T_driving():
@@ -545,7 +534,7 @@ def test_three_level_T_driving():
     kernel.compile()
 
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=htl)
-    result = kernel.run(tr)
+    ts = kernel.run(tr)
 
     # reference result
     resultr = opmesolve(
@@ -558,6 +547,6 @@ def test_three_level_T_driving():
         kernel="QuTip",
         args=param)
 
-    assert np.all(np.abs(result.state[0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(result.state[1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(result.state[2] - resultr.state[2]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
+    assert np.all(np.abs(ts[-1][2] - resultr.state[2]) < REF_TOL)
