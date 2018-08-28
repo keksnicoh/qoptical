@@ -104,16 +104,49 @@ class ReducedSystem():
         """ returns an array of `DTYPE_JUMP` describing the
             possible transitions at frequency `w`.
         """
-
-        # dipole transition moment
-        dij = (lambda i, j: (self.s[j] @ self.dipole @ self.s[i].T.conj())[0, 0]) \
-              if self.dipole is not None else \
-              (lambda i, j: 1)
-
-        return np.array([((i, j), dij(j, i), np.abs(e1 - e2), 0)
+        return np.array([((i, j), self.dij(j, i), np.abs(e1 - e2), 0)
                 for j, e1 in enumerate(self.ev)
                 for i, e2 in enumerate(self.ev)
                 if np.isclose(e1 - e2, w)], dtype=DTYPE_JUMP)
+
+
+    def dij(self, i, j):
+        """ dipole transition moment component (i, j) in eigenbase.
+            if no dipole defined, then all components with i != j are 1.
+            """
+        if self.dipole is None:
+            return 1 if i != j else 0
+
+        return (self.s[j] @ self.dipole @ self.s[i].T.conj())[0, 0]
+
+
+    def dipole_eb(self):
+        d = np.zeros_like(self.h0)
+
+        for i in range(self.h0.shape[0]):
+            for j in range(self.h0.shape[0]):
+                d[i,j] = self.dij(i, j)
+
+        return d
+
+    def get_jump_operators(self, list_empty=False):
+        """ returns all jump operators in given base
+            """
+        aw = []
+        for k, jumps in enumerate(self.get_jumps()):
+            if jumps is None:
+                continue
+
+            if k == 0:
+                for t in jumps:
+                    aw.append((t['w'], 1, t['d'] * ketbra(self.s, *t['I'])))
+            else:
+                for jump in jumps.reshape((int(len(jumps) / (k + 1)), k + 1)):
+                    op = sum(t['d'] * ketbra(self.s, *t['I']) for t in jump)
+                    aw.append((jump[0]['w'], k+1, op))
+
+
+        return [a for a in aw if list_empty or not np.allclose(a[2], 0)]
 
 
     def thermal_state(self, T):

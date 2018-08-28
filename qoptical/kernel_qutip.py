@@ -8,6 +8,7 @@ import numpy as np
 from .settings import *
 from .util import *
 from .result import OpMeResult
+from time import time
 
 class QutipKernel():
     """ Performs sequential integration of multiple states
@@ -37,6 +38,20 @@ class QutipKernel():
         # flags
         self.synced    = False
         self.compiled  = False
+        self.init()
+
+    def init(self):
+        if DEBUG:
+            print_debug("")
+            print_debug("                           //")
+            print_debug("   boaaa!!1              _oo\ ")
+            print_debug("                        (__/ \  _  _")
+            print_debug("   feed me and I           \  \/ \/ \ ")
+            print_debug("   will calculate          (         )\ ")
+            print_debug("   numbers for you.         \_______/  \ ")
+            print_debug("                             [[] [[]")
+            print_debug("   qutip kernel v0.0         [[] [[]")
+            print_debug("")
 
 
     def compile(self):
@@ -190,6 +205,7 @@ class QutipKernel():
             texpect = np.empty(shape, dtype=settings.DTYPE_COMPLEX)
 
         # integrate states
+        t0          = time()
         q_state_new = []
         zipped      = zip(self.q_hu, self.q_state, self.r_y_0, self.n_dst)
         for (i, (q_hu, q_s, y_0, n_dst)) in enumerate(zipped):
@@ -222,6 +238,10 @@ class QutipKernel():
             if tstate is not None:
                 tstate[i] = [s.full() for s in res.states]
                 q_state_new.append(res.states[-1])
+
+        tf = time()
+        if tstate is not None:
+            DEBUG and print_debug("1/1 calculated {} steps, took {:.4f}s".format(tstate.shape[0:2], tf - t0))
 
         fstate = None
         if tstate is not None:

@@ -162,7 +162,7 @@ class OpenCLKernel():
         if DEBUG:
             # because everyone likes ascii cats
             print_debug("")
-            print_debug('whopaa! whos there?                 ,-""""""-.                 v0.0');
+            print_debug('whopaa! whos there?                 ,-""""""-.    OpenCL kernel v0.0');
             print_debug("                                 /\j__/\  (  \`--.");
             print_debug("Compile me,                      \`@_@'/  _)  >--.`.");
             print_debug("give me data                    _{{.:Y:_}}_{{{{_,'    ) )");
@@ -494,10 +494,11 @@ class OpenCLKernel():
 
     def create_h_cl_jmp(self):
         """ create cl_jmp host buffer """
-        N, M = self.state.shape[0:2]
+        N, M = self.h_state.shape[0:2]
         dst = [boson_stat(t) for t in self.h_t_bath]
+
         cl_jmp = np.zeros((N, *self.jmp_instr.shape), dtype=self.__class__.DTYPE_T_JMP)
-        for i in range(0, len(self.state)):
+        for i in range(len(self.h_state)):
             cl_jmp[i]['IDX'] = self.jmp_instr['IDX']
             cl_jmp[i]['PF'] = self.h_y_0[i] \
                             * self.jmp_instr['PF'] \
@@ -599,7 +600,7 @@ class OpenCLKernel():
                  ...
                 ]
         """
-        N, M       = self.state.shape[0:2]
+        N, M       = self.h_state.shape[0:2]
         cl_jmp_opt = np.zeros((*cl_jmp.shape[0:3], self.jmp_n), dtype=cl_jmp.dtype)
         allidx     = [(i, j) for j in range(M) for i in range(M)]
 
