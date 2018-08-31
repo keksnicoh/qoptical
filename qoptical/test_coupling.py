@@ -8,7 +8,7 @@ from qoptical.opme import ReducedSystem
 from qoptical.kernel_qutip import QutipKernel
 from qoptical.kernel_opencl import OpenCLKernel
 from qoptical.util import thermal_dist
-
+from numpy.testing import assert_allclose
 RTOL = 0.00001
 
 def op_a(n):
@@ -23,32 +23,19 @@ def op_a(n):
     Oa[ar, ar+1] = np.sqrt(ar + 1)
     return Oa
 
-def test_thermalization():
-    """ in this test we setup a harmonic oscillator
-
-            H = \Omega n
-
-        such that it couples thru x operator
-
-            D = x = a^\dagger + a
-
-        and check whether a list of ground states
-        thermalize correctly.
-
-        Testes Kernels:
-        - QuTip
-        - OpenCL
+def test_complex_dipole_complex():
+    """ test whether complex components in dipole
+        operator are interpreted correctly.
         """
 
     # system parameters
     dimH        = 5
-    t_bath      = [0.0, 0.2, 1.0, 1.5]
-    y_0         = 1.25
-    Omega       = 1.0
-    tr          = (0, 4.00, 0.001)
-    state0      = np.zeros(dimH**2, dtype=np.complex64).reshape((dimH, dimH))
+    t_bath      = [0.0, 0.2, 0.5, 0.6]
+    y_0         = 0.15
+    Omega       = 1.4
+    tr          = (0, 16.52, 0.001)
+    state0      = np.zeros(dimH**2).reshape((dimH, dimH))
     state0[0,0] = 1
-    Ee          = [Omega * k for k in range(dimH)]
 
     # operators
     Oa  = op_a(dimH)
@@ -56,17 +43,16 @@ def test_thermalization():
     On  = Oad @ Oa
     Ox  = Oa + Oad
 
+    # non-complex dipole
+    dipole = [
+        0,              2+1j,       0,          3-np.pi*0.1j,   0,
+        2-1j,           0,          -1j,        0,              4,
+        0,              1j,         0,          5,              0,
+        3+np.pi*0.1j,   0,          5,          0,              6j,
+        0,              4,          0,          -6j,             0,
+    ];
     # reduced system
-    rs = ReducedSystem(Omega * On)
-
-    # the expected mean occupation numbers
-    #
-    #     <E> = Tr(H rho_th) = Tr(H sum_i p_i e^(beta*Omega*i))
-    #
-    expected_En = [
-        sum(e_i * p_i for (e_i, p_i) in zip(Ee, thermal_dist(Ee, t)))
-        for t in t_bath
-    ]
+    rs = ReducedSystem(Omega * On, dipole=dipole)
 
     # -- Run with QuTip
     kernel = QutipKernel(rs)
@@ -75,17 +61,12 @@ def test_thermalization():
     tlist = np.arange(*tr)
     result = kernel.run(tlist).tstate
 
-    # test whether states have thermalized
-    En = np.trace(result[-1,:]@On, axis1=1, axis2=2).real
-    assert np.allclose(expected_En, En, rtol=RTOL)
-
     # -- Run with OpenCL kernel
     kernelCL = OpenCLKernel(rs)
     kernelCL.compile()
     kernelCL.sync(t_bath=t_bath, y_0=y_0, state=state0.flatten())
-    resultCL = kernelCL.run(tr).tstate()
+    resultCL = kernelCL.run(tr, steps_chunk_size=132).tstate()
 
-    # test whether states have thermalized
-    EnCL = np.trace(resultCL[-1,:]@On, axis1=1, axis2=2).real
-    assert np.allclose(expected_En, EnCL, rtol=RTOL), "{}".format(expected_En - EnCL)
 
+    # -- compare all states at all times
+    assert_allclose(resultCL, result, atol=1e-5, rtol=1e-7)

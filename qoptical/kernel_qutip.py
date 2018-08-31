@@ -241,6 +241,7 @@ class QutipKernel():
 
         tf = time()
         if tstate is not None:
+            tstate = np.swapaxes(tstate, axis1=0, axis2=1)
             DEBUG and print_debug("1/1 calculated {} steps, took {:.4f}s".format(tstate.shape[0:2], tf - t0))
 
         fstate = None

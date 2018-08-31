@@ -57,7 +57,7 @@ def test_von_neumann():
            0, 0, 0, 0,
            0, 0, 0, 0,]
     kernel.sync(state=[ground_state, gs2], t_bath=0, y_0=0)
-    ts = kernel.run(tr)
+    ts = kernel.run(tr).tstate()
 
     # Debug:
     #qkernel = QutipKernel(system)
@@ -138,7 +138,7 @@ def test_von_neumann_basis():
     kernel = OpenCLKernel(system)
     kernel.compile()
     kernel.sync(state=states, y_0=0, t_bath=0)
-    ts = kernel.run(tr)
+    ts = kernel.run(tr).tstate()
 
     # test density operator
     assert tstate_rho_hermitian(ts[1:2])
@@ -179,7 +179,7 @@ def test_two_level_TZero():
     kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
     kernel.compile()
     kernel.sync(state=states, y_0=y_0, t_bath=0)
-    ts = kernel.run(tr)
+    ts = kernel.run(tr).tstate()
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=0, y_0=y_0, tw=[OMEGA], tlist=np.arange(*tr), kernel="QuTip")
@@ -228,7 +228,7 @@ def test_three_level_TZero():
     kernel = OpenCLKernel(sys)
     kernel.compile()
     kernel.sync(state=states, y_0=1.0, t_bath=0)
-    ts = kernel.run(tr)
+    ts = kernel.run(tr).tstate()
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=0, y_0=1.0, tw=tw, tlist=np.arange(*tr), kernel="QuTip")
@@ -276,13 +276,13 @@ def test_four_level_TZero():
     kernel = OpenCLKernel(sys)
     kernel.compile()
     kernel.sync(state=states, y_0=0.15, t_bath=0)
-    ts = kernel.run(tr)
+    ts = kernel.run(tr).tstate()
 
     kernel2 = OpenCLKernel(sys)
     kernel2.optimize_jumps = False
     kernel2.compile()
     kernel2.sync(state=states, y_0=0.15, t_bath=0)
-    ts2 = kernel2.run(tr)
+    ts2 = kernel2.run(tr).tstate()
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=0, y_0=0.15, tlist=np.arange(*tr), kernel="QuTip")
@@ -331,7 +331,7 @@ def test_two_level_T():
     kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
     kernel.compile()
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath)
-    ts = kernel.run(tr)
+    ts = kernel.run(tr).tstate()
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tw=[OMEGA], tlist=np.arange(*tr), kernel="QuTip")
@@ -382,7 +382,7 @@ def test_three_level_T():
     assert kernel.optimize_jumps
     kernel.compile()
     kernel.sync(state=states, y_0=1.0, t_bath=t_bath)
-    ts = kernel.run(tr)
+    ts = kernel.run(tr).tstate()
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=t_bath, y_0=1.0, tw=tw, tlist=np.arange(*tr), kernel="QuTip")
@@ -431,13 +431,13 @@ def test_four_level_T():
     kernel.optimize_jumps = True
     kernel.compile()
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath)
-    ts = kernel.run(tr)
+    ts = kernel.run(tr).tstate()
 
     kernel2 = OpenCLKernel(sys)
     kernel2.optimize_jumps = False
     kernel2.compile()
     kernel2.sync(state=states, y_0=y_0, t_bath=t_bath)
-    ts2 = kernel2.run(tr)
+    ts2 = kernel2.run(tr).tstate()
 
     # reference result
     resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tlist=np.arange(*tr), kernel="QuTip")
@@ -478,7 +478,7 @@ def test_two_level_T_driving():
     kernel.compile()
 
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=[1, 1, 1, 1])
-    ts = kernel.run(tr)
+    ts = kernel.run(tr).tstate()
 
     # reference result
     resultr = opmesolve(
@@ -534,7 +534,7 @@ def test_three_level_T_driving():
     kernel.compile()
 
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=htl)
-    ts = kernel.run(tr)
+    ts = kernel.run(tr, steps_chunk_size=73).tstate()
 
     # reference result
     resultr = opmesolve(

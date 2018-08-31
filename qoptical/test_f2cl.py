@@ -17,32 +17,36 @@ queue       = cl.CommandQueue(ctx)
 test_scalar_float = 1.3
 test_scalar_int   = 2
 
-@pytest.mark.parametrize("f", [
-    lambda t: 1.0,
-    lambda t: 5*t,
-    lambda t: np.sin(t),
-    lambda t: np.cos(t),
-    lambda t: np.tan(t),
-    lambda t: np.sinh(t),
-    lambda t: np.cosh(t),
-    lambda t: np.tanh(t),
-    lambda t: np.arcsin(t),
-    lambda t: np.arccos(t),
-    lambda t: np.arctan(t),
-    lambda t: math.sin(t),
-    lambda t: math.cos(t),
-    lambda t: math.tan(t),
-    lambda t: math.sinh(t),
-    lambda t: math.cosh(t),
-    lambda t: math.tanh(t),
-    lambda t: math.asin(t),
-    lambda t: math.acos(t),
-    lambda t: math.atan(t),
-    lambda t: np.sin(t)*2-1+3*np.cos(np.cos(t*t)),
+@pytest.mark.parametrize("f, domain", [
+    [lambda t: 1.0, np.arange(-1, 1, 0.1),],
+    [lambda t: 5*t, np.arange(-1, 1, 0.1),],
+    [lambda t: np.sin(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.cos(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.tan(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.sinh(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.cosh(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.tanh(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.arcsin(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.arccos(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.arctan(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.sqrt(t), np.arange(0, 4, 0.1),],
+    [lambda t: np.exp(t), np.arange(-1, 1, 0.1),],
+    [lambda t: math.sin(t), np.arange(-1, 1, 0.1),],
+    [lambda t: math.cos(t), np.arange(-1, 1, 0.1),],
+    [lambda t: math.tan(t), np.arange(-1, 1, 0.1),],
+    [lambda t: math.sinh(t), np.arange(-1, 1, 0.1),],
+    [lambda t: math.cosh(t), np.arange(-1, 1, 0.1),],
+    [lambda t: math.tanh(t), np.arange(-1, 1, 0.1),],
+    [lambda t: math.asin(t), np.arange(-1, 1, 0.1),],
+    [lambda t: math.acos(t), np.arange(-1, 1, 0.1),],
+    [lambda t: math.atan(t), np.arange(-1, 1, 0.1),],
+    [lambda t: math.sqrt(t), np.arange(0, 2, 0.1),],
+    [lambda t: math.exp(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.sin(t)*2-1+3*np.cos(np.cos(t*t)), np.arange(-1, 1, 0.1),],
     # scalar from globals
-    lambda t: test_scalar_int * t / test_scalar_float
+    [lambda t: test_scalar_int * t / test_scalar_float, np.arange(-1, 1, 0.1),],
 ])
-def test_f2cl(f):
+def test_f2cl(f, domain):
     r_clf = f2cl.f2cl(f, "bork_from_ork")
 
     # compile
@@ -62,7 +66,7 @@ def test_f2cl(f):
 
     # run
     mf       = cl.mem_flags
-    h_x      = np.arange(-1, 1, 0.1).astype(np.float32)
+    h_x      = domain.astype(np.float32)
     h_return = np.empty_like(h_x)
     b_x      = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=h_x)
     b_return = cl.Buffer(ctx, mf.WRITE_ONLY | mf.COPY_HOST_PTR, hostbuf=h_return)

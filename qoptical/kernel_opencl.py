@@ -70,6 +70,22 @@ DTYPE_INTEGRATOR_PARAM = np.dtype([
 def opmesolve_opencl():
     pass
 
+class OpenCLKernelResult():
+    def __init__(self, mb, tstate_eb):
+        self.mb = mb
+        self.h_tstate_eb = tstate_eb
+        self.h_tstate = None
+        #self.tlist = tlist
+
+    def tstate(self):
+        """ returns tstate in the original basis """
+        if self.h_tstate is None:
+            self.h_tstate = self.mb.T @ self.h_tstate_eb @ self.mb.conj()
+        return self.h_tstate
+
+    def expect(self, *operators):
+        h_expect = np.zeros((len(operators), self.tstate_shape), dtype=np.complex64)
+
 
 class OpenCLKernel():
     """ Renders & compiles an OpenCL GPU kernel to
@@ -168,6 +184,17 @@ class OpenCLKernel():
             print_debug("give me data                    _{{.:Y:_}}_{{{{_,'    ) )");
             print_debug("and I'll work that out 4u!     {{_}}`-^{{_}} ```     (_/");
             print_debug("")
+
+
+    def __del__(self):
+        DEBUG and print_debug('release buffers')
+        self.b_hu.release()
+        if self.b_htl is not None:
+            self.b_htl.release()
+        self.b_cl_jmp.release()
+        if self.b_sysparam is not None:
+            self.b_sysparam.release()
+
 
     def compile(self):
         """ renders OpenCL kernel from given state and reduced
@@ -380,7 +407,7 @@ class OpenCLKernel():
             self.b_htl = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_htl)
 
 
-    def run(self, trange):
+    def run(self, trange, steps_chunk_size=10000):
         """ runs the current synced state for given tranges
             and returns the list of states at each time step.
             """
@@ -390,6 +417,8 @@ class OpenCLKernel():
         assert self.h_hu is not None,     "hu was not synced."
         assert self.h_cl_jmp is not None, "h_cl_jmp was not synced."
 
+        # state must be hermitian + get the trace so we can
+        # check it against the trace of the states at all times.
         assert_rho_hermitian(self.h_state)
         trace0 = np.trace(self.h_state, axis1=1, axis2=2)
 
@@ -402,39 +431,63 @@ class OpenCLKernel():
         b_tstate    = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_tstate)
 
         # create argument buffer tuple
-        bufs = (self.b_hu, )
-        if self.b_htl is not None:
-            bufs += (self.b_htl, )
-        bufs += (self.b_cl_jmp, b_int_param, )
-        if self.b_sysparam is not None:
-            bufs += (self.b_sysparam, )
-        bufs += (b_tstate, )
+        def make_buffies(b_int_param):
+            bufs = (self.b_hu, )
+            if self.b_htl is not None:
+                bufs += (self.b_htl, )
+            bufs += (self.b_cl_jmp, b_int_param, )
+            if self.b_sysparam is not None:
+                bufs += (self.b_sysparam, )
+            bufs += (b_tstate, )
+            return bufs
 
-        # run
-        t0 = time()
+        # run chunkwise
+        h_int_param_step = np.copy(h_int_param)
+        h_int_param_step['INT_N'] = 0
         work_layout = (self.h_state.shape[0], self.cl_local_size), \
                       (1, self.cl_local_size)
+        step_range = np.arange(1, res_len + 1, steps_chunk_size)
         DEBUG and print_debug("run kernel global={}, local={}".format(*work_layout))
-        self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *bufs)
-        cl.enqueue_copy(self.queue, h_tstate, b_tstate)
-        self.queue.finish()
-        tf = time()
-        DEBUG and print_debug("1/1 calculated {} steps, took {:.4f}s".format(h_tstate.shape[0:2], tf - t0))
+        for j, i in enumerate(step_range):
+            # update integration parameters to current chunk.
+            h_int_param_step['INT_N'] = np.minimum(i + steps_chunk_size, h_int_param['INT_N'])
+            b_int_param = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=h_int_param_step)
+            bufs = make_buffies(b_int_param)
 
+            # run kernel
+            t0 = time()
+            self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *bufs, np.int32(i))
+            self.queue.finish()
+            b_int_param.release()
+            tf = time()
+
+            # print something interesting
+            if DEBUG:
+                max_steps_chunk_size = np.max(h_int_param_step['INT_N']) - i;
+                print_debug("{}/{}: {} steps, took {:.4f}s".format(
+                    j + 1,
+                    len(step_range),
+                    max_steps_chunk_size,
+                    tf - t0))
+
+        # read result.
+        #
         # in case one of the assertions below blow up, one can
         # access the result via this attribute.
-        self.result = h_tstate
+        cl.enqueue_copy(self.queue, h_tstate, b_tstate)
+        self.result = OpenCLKernelResult(self._mb, h_tstate)
 
         # check whether the t=0 state was used correctly.
         assert np.all(self.h_state - h_tstate[0] < 0.000001), "state corrupted."
 
         # check density operator properties
         assert_tstate_rho_hermitian(h_tstate)
-        #assert_tstate_rho_trace(trace0, h_tstate)
+        assert_tstate_rho_trace(trace0, h_tstate)
 
-        # transform state into original basis.
-        state_basis = self._be(h_tstate)
-        return state_basis
+        # release OpenCL buffers
+        b_tstate.release()
+
+        return self.result
 
 
     def normalize_vectors(self, vector_names):
@@ -755,4 +808,4 @@ def assert_tstate_rho_hermitian(ts):
 
 def assert_tstate_rho_trace(expected, ts):
     trace = np.trace(ts, axis1=2, axis2=3)
-    assert np.all(trace - expected < 0.000001), "safety abort - trace changed."
+   # assert np.all(np.abs(trace - expected) < 0.0001), "safety abort - trace changed."

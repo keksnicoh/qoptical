@@ -19,7 +19,8 @@ __kernel void opmesolve_rk4_eb(
     __global const $(cfloat_t) *hu,/*{arg_htl}*/
     __global const t_jump *jb,
     __global const t_int_parameters *int_parameters,/*{arg_sysparam}*/
-    __global $(cfloat_t) *result
+    __global $(cfloat_t) *result,
+    const int n0
 ) {
     $(float) t;
     int n;
@@ -42,14 +43,14 @@ __kernel void opmesolve_rk4_eb(
 
     // init local memory
     prm          = int_parameters[GID];
-    _rho         = result[__in_offset + __item]; // t=0
+    _rho         = result[__out_len * (n0 - 1) + __in_offset + __item]; // t=0
     _h0[__item]  = hu[__in_offset + __item];
     _h0[__itemT] = hu[__in_offset + __itemT];
     /*{htl_priv}*/
 
     // loop init
-    t  = prm.INT_T0;
-    n  = 1;
+    t  = prm.INT_T0 + n0 * prm.INT_DT;
+    n  = n0;
     while (n < prm.INT_N) {
         // k1
         k1 = $(cfloat_fromreal)(0.0f);

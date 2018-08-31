@@ -37,6 +37,8 @@ GLOBALS_MAP = [
     (np.sinh,   'sinh'),
     (np.cosh,   'cosh'),
     (np.tanh,   'tanh'),
+    (np.sqrt,   'sqrt'),
+    (np.exp,    'exp'),
     (math.sin,  'sin'),
     (math.cos,  'cos'),
     (math.tan,  'tan'),
@@ -46,13 +48,15 @@ GLOBALS_MAP = [
     (math.sinh, 'sinh'),
     (math.cosh, 'cosh'),
     (math.tanh, 'tanh'),
+    (math.sqrt, 'sqrt'),
+    (math.exp,  'exp'),
 ]
 
 def r_clfloat(f, prec=None):
     """ renders an OpenCL float representation """
     if prec is not None:
         raise NotImplementedError()
-    sf = str(f)
+    sf = '{:f}'.format(f)
     return ''.join([sf, '' if '.' in sf else '.', 'f'])
 
 
