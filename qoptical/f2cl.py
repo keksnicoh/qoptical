@@ -15,33 +15,35 @@
 """
 
 import dis
-import numpy as np
 import math
+import numpy as np
 
-T_VAR            = 'VAR'
-T_FUNC           = 'T_FUNC'
-T_SYMBOLE        = 'T_SYMBOLE'
+T_VAR = 'VAR'
+T_FUNC = 'T_FUNC'
+T_SYMBOLE = 'T_SYMBOLE'
 T_GLOBAL_SYMBOLE = 'T_GLOBAL_SYMBOLE'
-T_VAL            = 'T_VAL'
-T_BIN            = 'T_BIN'
-T_RETURN         = 'T_RETURN'
-T_DICT           = 'T_DICT'
+T_VAL = 'T_VAL'
+T_BIN = 'T_BIN'
+T_RETURN = 'T_RETURN'
+T_DICT = 'T_DICT'
 
 GLOBALS_MAP = [
-    (np.sin,    'sin'),
-    (np.cos,    'cos'),
-    (np.tan,    'tan'),
+    (np.sin, 'sin'),
+    (np.cos, 'cos'),
+    (np.tan, 'tan'),
     (np.arcsin, 'asin'),
     (np.arccos, 'acos'),
     (np.arctan, 'atan'),
-    (np.sinh,   'sinh'),
-    (np.cosh,   'cosh'),
-    (np.tanh,   'tanh'),
-    (np.sqrt,   'sqrt'),
-    (np.exp,    'exp'),
-    (math.sin,  'sin'),
-    (math.cos,  'cos'),
-    (math.tan,  'tan'),
+    (np.sinh, 'sinh'),
+    (np.cosh, 'cosh'),
+    (np.tanh, 'tanh'),
+    (np.sqrt, 'sqrt'),
+    (np.exp, 'exp'),
+    (np.abs, 'fabs'),
+    (np.cbrt, 'cbrt'),
+    (math.sin, 'sin'),
+    (math.cos, 'cos'),
+    (math.tan, 'tan'),
     (math.asin, 'asin'),
     (math.acos, 'acos'),
     (math.atan, 'atan'),
@@ -49,11 +51,13 @@ GLOBALS_MAP = [
     (math.cosh, 'cosh'),
     (math.tanh, 'tanh'),
     (math.sqrt, 'sqrt'),
-    (math.exp,  'exp'),
+    (math.exp, 'exp'),
 ]
 
+
 def r_clfloat(f, prec=None):
-    """ renders an OpenCL float representation """
+    """ renders an OpenCL float representation
+        """
     if prec is not None:
         raise NotImplementedError()
     sf = '{:f}'.format(f)
@@ -61,19 +65,22 @@ def r_clfloat(f, prec=None):
 
 
 def r_clint(f):
-    """ renders an OpenCL integer representation """
+    """ renders an OpenCL integer representation
+        """
     assert isinstance(f, int)
     return str(f)
 
 
 def r_clfrac(p, q, prec=None):
-    """ renders an OpenCL fractional representation """
+    """ renders an OpenCL fractional representation
+        """
     return "{}/{}".format(r_clfloat(p, prec), r_clfloat(q, prec))
 
 
 def f2cl(f, cl_fname, cl_param_type=None):
-
-    fglobals = f.__globals__
+    """ converts given function **f** to OpenCL function
+        with name **cl_fname**.
+        """
     ctree = create_ctree(f)
 
     if ctree[0] != T_RETURN:
@@ -87,11 +94,11 @@ def f2cl(f, cl_fname, cl_param_type=None):
                "    return {r_expr};\n"
                "}}")
         return tpl.format(r_fname=r_fname, r_expr=r_expr, r_param_type=cl_param_type)
-    else:
-        tpl = ("static float {r_fname}(float t) {{\n"
-               "    return {r_expr};\n"
-               "}}")
-        return tpl.format(r_fname=r_fname, r_expr=r_expr)
+
+    tpl = ("static float {r_fname}(float t) {{\n"
+           "    return {r_expr};\n"
+           "}}")
+    return tpl.format(r_fname=r_fname, r_expr=r_expr)
 
 
 def glob_attr_to_cl(mod, attr):
@@ -100,13 +107,13 @@ def glob_attr_to_cl(mod, attr):
     if len(attr):
         return glob_attr_to_cl(getattr(mod, attr[0]), attr[1:])
 
-    if type(mod) is int or isinstance(mod, np.int32):
+    if isinstance(mod, (int, np.int32)):
         return r_clint(mod)
 
-    if isinstance(mod, float) or isinstance(mod, np.float32) or isinstance(mod, np.float64):
+    if isinstance(mod, (float, np.float32, np.float64)):
         return r_clfloat(mod)
 
-    if isinstance(mod, np.complex64) or isinstance(mod, np.float128):
+    if isinstance(mod, (np.complex64, np.complex128)):
         raise ValueError('complex numbers not supported in real function.')
 
     try:
@@ -117,16 +124,21 @@ def glob_attr_to_cl(mod, attr):
 
 
 def instruction_scalar(instruction):
+    """ identifies scalar instruction
+        """
     if not isinstance(instruction, dis.Instruction):
         return instruction
-    elif instruction.opname == "LOAD_CONST":
+
+    if instruction.opname == "LOAD_CONST":
         return (T_VAL, instruction.argval)
-    elif instruction.opname == "LOAD_GLOBAL":
+
+    if instruction.opname == "LOAD_GLOBAL":
         return (T_GLOBAL_SYMBOLE, instruction.argval)
-    elif instruction.opname == "LOAD_FAST":
+
+    if instruction.opname == "LOAD_FAST":
         return (T_SYMBOLE, instruction.argval, instruction.arg)
-    else:
-        raise ValueError(instruction)
+
+    raise ValueError(instruction)
 
 
 BIN_MAP = {
@@ -139,37 +151,35 @@ BIN_MAP = {
 }
 
 def f2cl_expr(ctree, glb):
-
+    """ maps ctree to an expression
+        """
     if ctree[0] == T_FUNC:
         fname = f2cl_expr(ctree[1], glb)
         return "{}({})".format(fname, ', '.join([f2cl_expr(c, glb) for c in ctree[2]]))
 
-    elif ctree[0] == T_SYMBOLE:
+    if ctree[0] == T_SYMBOLE:
         if ctree[2] == 0:
             return 't'
-        elif ctree[2] == 1:
+        if ctree[2] == 1:
             return 'p'
-        else:
-            raise RuntimeError('to many local symbols')
-        return ctree[1]
+        raise RuntimeError('to many local symbols')
 
-    elif ctree[0] == T_GLOBAL_SYMBOLE:
+    if ctree[0] == T_GLOBAL_SYMBOLE:
         glob_key = ctree[1].split('.')
         if not glob_key[0] in glb:
             raise RuntimeError('unkown global {}'.format(ctree[1]))
         return glob_attr_to_cl(glb[glob_key[0]], glob_key[1:])
 
-    elif ctree[0] == T_VAL:
-        if isinstance(ctree[1], int) or isinstance(ctree[1], np.int):
+    if ctree[0] == T_VAL:
+        if isinstance(ctree[1], (int, np.int)):
             return r_clint(ctree[1])
-        elif isinstance(ctree[1], float) or isinstance(ctree[1], np.float) \
-          or isinstance(ctree[1], np.double):
+        if isinstance(ctree[1], (float, np.float, np.double)):
             return r_clfloat(ctree[1])
-        elif isinstance(ctree[1], str):
+        if isinstance(ctree[1], str):
             return "'{}'".format(ctree[1])
         raise NotImplementedError(str(ctree))
 
-    elif ctree[0] == T_DICT:
+    if ctree[0] == T_DICT:
         if ctree[2][0] != T_VAL:
             msg = "only static subscription supported: {}[{}] given."
             raise NotImplementedError(msg.format(ctree[1], ctree[2]))
@@ -178,14 +188,13 @@ def f2cl_expr(ctree, glb):
             raise NotImplementedError(msg.format(ctree[1], ctree[2]))
         return "{}.{}".format(f2cl_expr(ctree[1], {}), ctree[2][1])
 
-    elif ctree[0] == T_BIN:
+    if ctree[0] == T_BIN:
         if ctree[1] in ['*', '+', '/', '-']:
             return "({} {} {})".format(
                 f2cl_expr(ctree[2][0], glb),
                 ctree[1],
                 f2cl_expr(ctree[2][1], glb))
         raise NotImplementedError()
-
 
 
     raise NotImplementedError(str(ctree))
@@ -199,7 +208,7 @@ def ctree_print(a, l=0):
         print(l * ' ' + str(a))
 
     elif not isinstance(a, tuple):
-        return '!?'
+        print('!?')
 
     elif a[0] == T_FUNC:
         print(l * ' ' + a[0] + "(" + str(a[1]) + ")")
@@ -266,8 +275,6 @@ def create_ctree(f):
             # - this opname is not needed as long as the IF/ELSE does
             #   not work.
             raise NotImplementedError('Waiting for if/else/while. Sryy')
-            current = ('T_COMPARE', a.argval, read[-2:])
-            read.append(current)
 
         elif a.opname in BIN_MAP:
             current = (T_BIN, BIN_MAP[a.opname], [
@@ -285,8 +292,8 @@ def create_ctree(f):
 
         elif a.opname == 'RETURN_VALUE':
             if len(read) != 1:
-                for a in read:
-                    print(a)
+                for b in read:
+                    print(b)
                 raise RuntimeError('do not know how to deal with this?!')
             current = (T_RETURN, read[-1])
             read.append(current)

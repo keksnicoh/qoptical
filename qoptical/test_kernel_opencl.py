@@ -431,7 +431,7 @@ def test_four_level_T():
     kernel.optimize_jumps = True
     kernel.compile()
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath)
-    ts = kernel.run(tr).tstate()
+    ts = kernel.run(tr, steps_chunk_size=1111).tstate()
 
     kernel2 = OpenCLKernel(sys)
     kernel2.optimize_jumps = False
@@ -477,8 +477,8 @@ def test_two_level_T_driving():
     kernel.ht_coeff = [lambda t, p: p['A'] * np.sin(p['b'] * t / np.pi)]
     kernel.compile()
 
-    kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=[1, 1, 1, 1])
-    ts = kernel.run(tr).tstate()
+    kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=[[1, 1, 1, 1]])
+    ts = kernel.run(tr, steps_chunk_size=1234).tstate()
 
     # reference result
     resultr = opmesolve(
@@ -533,8 +533,8 @@ def test_three_level_T_driving():
     kernel.ht_coeff = [lambda t, p: p['A'] * np.sin(p['b'] * t * np.pi)]
     kernel.compile()
 
-    kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=htl)
-    ts = kernel.run(tr, steps_chunk_size=73).tstate()
+    kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=[htl])
+    ts = kernel.run(tr, steps_chunk_size=431).tstate()
 
     # reference result
     resultr = opmesolve(

@@ -66,21 +66,86 @@ DTYPE_INTEGRATOR_PARAM = np.dtype([
     ('INT_N',  np.int32),
 ])
 
+def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[], params=None):
+    """ evolves expectation value on time gatte `tr`.
+
+        Parameters:
+        -----------
+
+        :tr:             time range defining the time gatter `(t0, tf, dt)`
+
+        :reduced_system: Instance of the reduced system which configures the
+                         jumping and coupling to the bath
+
+        :t_bath:         float or vector of temperatures
+
+        :y_0:            float or vector of global damping
+
+        :rho0:           matrix or vector of matricies representing state at `tr[0]`
+
+        :Oexpect:        the expectation value of this operator is the result
+                         of this function.
+
+        :OHul:           list of unitary hamiltonians
+
+        :params:         vector or single system parameter tuple.
+                         Must have a specific numpy dtype, e.g.:
+                            ```python
+                            p = np.array(
+                                [(1,2)],
+                                dtype=np.dtype([
+                                    ('a', np.float32),
+                                    ('b', np.float32)
+                                ])
+                            )
+                            ```
+
+        Result:
+        -------
+
+        an np.array of shape (len(time_gatter), N) where N is the number of systems.
+
+        XXX: unit test this function
+
+        """
+
+    t_param = None
+    if params is not None:
+        t_param = params.dtype
+
+    ht_coeff = [ht[1] for ht in OHul]
+    ht_op    = [ht[0] for ht in OHul]
+    kernel = OpenCLKernel(reduced_system, t_sysparam=t_param, ht_coeff=ht_coeff)
+    kernel.compile()
+
+    kernel.sync(state=rho0, t_bath=t_bath, y_0=y_0, sysparam=params, htl=ht_op)
+
+    # result reader / expectation value
+    tlist  = np.arange(*tr)
+    result = np.zeros((len(tlist), kernel.N), dtype=np.complex64)
+    Oeb    = kernel.eb(Oexpect)
+    def reader(idx, tgrid, rho_eb):
+        result[idx[0]:idx[1]] = np.trace(rho_eb@Oeb, axis1=2, axis2=3)
+
+    # run
+    kernel.run(tr, steps_chunk_size=1e4, reader=reader)
+
+    return result
 
 def opmesolve_opencl():
     pass
 
 class OpenCLKernelResult():
-    def __init__(self, mb, tstate_eb):
+    def __init__(self, mb, h_tstate):
         self.mb = mb
-        self.h_tstate_eb = tstate_eb
-        self.h_tstate = None
+        self.h_tstate = h_tstate
+
         #self.tlist = tlist
 
     def tstate(self):
         """ returns tstate in the original basis """
-        if self.h_tstate is None:
-            self.h_tstate = self.mb.T @ self.h_tstate_eb @ self.mb.conj()
+      #  if self.h_tstate is None:
+      #      self.h_tstate = self. self.mb.T @ self.h_tstate_eb @ self.mb.conj()
         return self.h_tstate
 
     def expect(self, *operators):
@@ -136,6 +201,9 @@ class OpenCLKernel():
         self.cl_local_size = None # due to hermicity we only need M*(M+1)/2 work-items
                                   # where M is dimH
 
+        self.dimH = None
+        self.N = None
+
         # time dependent hamiltonian
         self.t_sysparam_name = None
         self.ht_coeff        = ht_coeff
@@ -190,8 +258,10 @@ class OpenCLKernel():
         DEBUG and print_debug('release buffers')
         self.b_hu.release()
         if self.b_htl is not None:
-            self.b_htl.release()
-        self.b_cl_jmp.release()
+            for b_ht in self.b_htl:
+                b_ht.release()
+        if self.b_cl_jmp is not None:
+            self.b_cl_jmp.release()
         if self.b_sysparam is not None:
             self.b_sysparam.release()
 
@@ -399,15 +469,21 @@ class OpenCLKernel():
         if self.h_y_0 is not None and self.h_t_bath is not None:
             DEBUG and print_debug('compute jumping structure...')
             self.h_cl_jmp = self.create_h_cl_jmp()
-            self.b_cl_jmp = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_cl_jmp)
+            self.b_cl_jmp = self.arr_to_buf(self.h_cl_jmp, readonly=True)
 
         #XXX
         if htl is not None:
-            self.h_htl = self._eb(np.array(htl, dtype=np.complex64).reshape(1, *self.system.h0.shape))
-            self.b_htl = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_htl)
+            self.h_htl = [
+                self.eb(np.array(ht, dtype=np.complex64).reshape(1, *self.system.h0.shape))
+                for ht in htl
+            ]
+            self.b_htl = [
+                self.arr_to_buf(h_ht, readonly=True)
+                for h_ht in self.h_htl
+            ]
 
 
-    def run(self, trange, steps_chunk_size=10000):
+    def run(self, trange, steps_chunk_size=1e4, reader=None):
         """ runs the current synced state for given tranges
             and returns the list of states at each time step.
             """
@@ -416,6 +492,7 @@ class OpenCLKernel():
         assert self.h_state is not None,  "state was not synced."
         assert self.h_hu is not None,     "hu was not synced."
         assert self.h_cl_jmp is not None, "h_cl_jmp was not synced."
+        steps_chunk_size = int(steps_chunk_size)
 
         # state must be hermitian + get the trace so we can
         # check it against the trace of the states at all times.
@@ -425,69 +502,95 @@ class OpenCLKernel():
         trange      = self.normalize_trange(trange)
         h_int_param = self._create_int_param(trange)
         res_len     = max(r['INT_N'] for r in h_int_param)
-        h_tstate    = np.zeros((res_len, *self.h_state.shape), dtype=self.h_state.dtype)
-        h_tstate[0] = self.h_state # rho at t=0
-        b_int_param = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=h_int_param)
-        b_tstate    = cl.Buffer(self.ctx, mf.COPY_HOST_PTR, hostbuf=h_tstate)
+
+        if reader is None:
+            h_tstate    = np.zeros((res_len+1, *self.h_state.shape), dtype=self.h_state.dtype)
+            h_tstate[0] = self.h_state # rho at t=0
+
+            def xreader(idx, tgrid, rho_eb):
+                h_tstate[idx[0]:idx[1]] = self._mb.T @ rho_eb @ self._mb.conj()
+        else:
+            xreader = reader
+
+        rho0 = self.h_state
+        h_rhot = np.zeros((steps_chunk_size + 1, *self.h_state.shape), dtype=self.h_state.dtype)
+     #   b_rhot = self.arr_to_buf(h_rhot)
+
+        b_int_param = self.arr_to_buf(h_int_param, readonly=True)
+       # b_tstate    = self.arr_to_buf(h_tstate)
 
         # create argument buffer tuple
-        def make_buffies(b_int_param):
+        def make_buffies(b_int_param, b_rhot):
             bufs = (self.b_hu, )
             if self.b_htl is not None:
-                bufs += (self.b_htl, )
+                bufs += (*self.b_htl, )
             bufs += (self.b_cl_jmp, b_int_param, )
             if self.b_sysparam is not None:
                 bufs += (self.b_sysparam, )
-            bufs += (b_tstate, )
+            bufs += (b_rhot, )
             return bufs
+
 
         # run chunkwise
         h_int_param_step = np.copy(h_int_param)
         h_int_param_step['INT_N'] = 0
         work_layout = (self.h_state.shape[0], self.cl_local_size), \
                       (1, self.cl_local_size)
-        step_range = np.arange(1, res_len + 1, steps_chunk_size)
+        step_range = np.arange(0, res_len -1, steps_chunk_size)
         DEBUG and print_debug("run kernel global={}, local={}".format(*work_layout))
         for j, i in enumerate(step_range):
             # update integration parameters to current chunk.
-            h_int_param_step['INT_N'] = np.minimum(i + steps_chunk_size, h_int_param['INT_N'])
-            b_int_param = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=h_int_param_step)
-            bufs = make_buffies(b_int_param)
+            h_int_param_step['INT_T0'] = i * h_int_param_step['INT_DT']
+            h_int_param_step['INT_N'] = np.minimum(steps_chunk_size, h_int_param['INT_N'] - i) + 1
+
+            h_rhot    = np.zeros((steps_chunk_size + 1, *self.h_state.shape), dtype=self.h_state.dtype)
+            h_rhot[0] = rho0
+            b_rhot    = self.arr_to_buf(h_rhot)
+
+            b_int_param = self.arr_to_buf(h_int_param_step, readonly=True)
+            bufs = make_buffies(b_int_param, b_rhot)
 
             # run kernel
             t0 = time()
             self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *bufs, np.int32(i))
+            cl.enqueue_copy(self.queue, h_rhot, b_rhot)
             self.queue.finish()
             b_int_param.release()
-            tf = time()
+            b_rhot.release()
 
+            # XXX
+            # - system dependent integration parameters
+            rho0 = h_rhot[-1]
+            i0, i1 = i + 1, i + h_int_param_step['INT_N'][0]
+            xreader((i0, i1), None, h_rhot[1:h_int_param_step['INT_N'][0]])
+
+            tf = time()
             # print something interesting
             if DEBUG:
                 max_steps_chunk_size = np.max(h_int_param_step['INT_N']) - i;
-                print_debug("{}/{}: {} steps, took {:.4f}s".format(
-                    j + 1,
-                    len(step_range),
+                print_debug("{}-{}: {} steps, took {:.4f}s".format(
+                    i0, i1,
                     max_steps_chunk_size,
                     tf - t0))
 
-        # read result.
-        #
-        # in case one of the assertions below blow up, one can
-        # access the result via this attribute.
-        cl.enqueue_copy(self.queue, h_tstate, b_tstate)
-        self.result = OpenCLKernelResult(self._mb, h_tstate)
+        if reader is not None:
+            return None
+
+        self.result = OpenCLKernelResult(self._mb, h_tstate[:-1])
 
         # check whether the t=0 state was used correctly.
         assert np.all(self.h_state - h_tstate[0] < 0.000001), "state corrupted."
-
-        # check density operator properties
-        assert_tstate_rho_hermitian(h_tstate)
-        assert_tstate_rho_trace(trace0, h_tstate)
-
-        # release OpenCL buffers
-        b_tstate.release()
-
         return self.result
+
+
+    def arr_to_buf(self, arr, readonly=False):
+        try:
+            flags = mf.COPY_HOST_PTR
+            if readonly:
+                flags |= mf.READ_ONLY
+            return cl.Buffer(self.ctx, flags, hostbuf=arr)
+        except:
+            raise RuntimeError('could not allocate buffer of size {:.2f}mb'.format(arr.size/1024/1024))
 
 
     def normalize_vectors(self, vector_names):
@@ -516,7 +619,7 @@ class OpenCLKernel():
         for nw, jumps in enumerate(self.system.get_jumps()):
             if jumps is None:
                 continue
-            jumps = jumps.reshape((int(len(jumps) / (nw+1)), nw+1))
+            jumps = jumps.reshape((int(len(jumps) / (nw + 1)), nw + 1))
             for jump in jumps:
                 fj.append(jump)
         return fj
@@ -528,10 +631,10 @@ class OpenCLKernel():
             only normalize the allready synced buffers. """
         vnorm = self.normalize_vectors(['state', 'y_0', 't_bath', 'hu', 'sysparam'])
         if 'state' in vnorm:
-            self.h_state = self._eb(vnorm['state'])
+            self.h_state = self.eb(vnorm['state'])
 
         if 'hu' in vnorm:
-            self.h_hu = self._eb(vnorm['hu'])
+            self.h_hu = self.eb(vnorm['hu'])
             self.b_hu = cl.Buffer(self.ctx, mf.COPY_HOST_PTR | mf.READ_ONLY, hostbuf=self.h_hu)
 
         if 'sysparam' in vnorm:
@@ -543,6 +646,8 @@ class OpenCLKernel():
 
         if 't_bath' in vnorm:
             self.h_t_bath = vnorm['t_bath']
+
+        self.N, self.dimH = self.h_state.shape[0:2]
 
 
     def create_h_cl_jmp(self):
@@ -674,7 +779,7 @@ class OpenCLKernel():
         return cl_jmp_opt
 
 
-    def _eb(self, op):
+    def eb(self, op):
         """ transforms `op` into eigenbase.
             `op` must be ndarray of shape `(M,M)` or `(N,M,M)`
             """

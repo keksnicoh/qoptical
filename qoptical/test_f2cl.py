@@ -31,6 +31,8 @@ test_scalar_int   = 2
     [lambda t: np.arctan(t), np.arange(-1, 1, 0.1),],
     [lambda t: np.sqrt(t), np.arange(0, 4, 0.1),],
     [lambda t: np.exp(t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.cbrt(t), np.arange(0, 1, 0.1)],
+    [lambda t: np.abs(t), np.arange(-1.0, 1, 0.1)],
     [lambda t: math.sin(t), np.arange(-1, 1, 0.1),],
     [lambda t: math.cos(t), np.arange(-1, 1, 0.1),],
     [lambda t: math.tan(t), np.arange(-1, 1, 0.1),],
@@ -42,6 +44,7 @@ test_scalar_int   = 2
     [lambda t: math.atan(t), np.arange(-1, 1, 0.1),],
     [lambda t: math.sqrt(t), np.arange(0, 2, 0.1),],
     [lambda t: math.exp(t), np.arange(-1, 1, 0.1),],
+    # XXX math fabs, cbrt
     [lambda t: np.sin(t)*2-1+3*np.cos(np.cos(t*t)), np.arange(-1, 1, 0.1),],
     # scalar from globals
     [lambda t: test_scalar_int * t / test_scalar_float, np.arange(-1, 1, 0.1),],
