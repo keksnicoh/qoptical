@@ -66,7 +66,7 @@ DTYPE_INTEGRATOR_PARAM = np.dtype([
     ('INT_N',  np.int32),
 ])
 
-def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[], params=None):
+def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[], params=None, rec_skip=1):
     """ evolves expectation value on time gatte `tr`.
 
         Parameters:
@@ -121,11 +121,14 @@ def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[],
     kernel.sync(state=rho0, t_bath=t_bath, y_0=y_0, sysparam=params, htl=ht_op)
 
     # result reader / expectation value
-    tlist  = np.arange(*tr)
+    tlist  = np.arange(*tr)[::rec_skip]
     result = np.zeros((len(tlist), kernel.N), dtype=np.complex64)
     Oeb    = kernel.eb(Oexpect)
     def reader(idx, tgrid, rho_eb):
-        result[idx[0]:idx[1]] = np.trace(rho_eb@Oeb, axis1=2, axis2=3)
+        sidx = (int(np.ceil(idx[0] / rec_skip)), int(np.ceil(idx[1] / rec_skip)))
+        nrho = result[sidx[0]:sidx[1]].shape[0]
+        print(nrho, sidx[1]-sidx[0])
+        result[sidx[0]:sidx[1]] = np.trace(rho_eb[::rec_skip][:nrho] @ Oeb, axis1=2, axis2=3)
 
     # run
     kernel.run(tr, steps_chunk_size=1e4, reader=reader)
@@ -541,7 +544,7 @@ class OpenCLKernel():
         for j, i in enumerate(step_range):
             # update integration parameters to current chunk.
             h_int_param_step['INT_T0'] = i * h_int_param_step['INT_DT']
-            h_int_param_step['INT_N'] = np.minimum(steps_chunk_size, h_int_param['INT_N'] - i) + 1
+            h_int_param_step['INT_N'] = np.minimum(steps_chunk_size + 1, h_int_param['INT_N'] - i)
 
             h_rhot    = np.zeros((steps_chunk_size + 1, *self.h_state.shape), dtype=self.h_state.dtype)
             h_rhot[0] = rho0
@@ -558,20 +561,24 @@ class OpenCLKernel():
             b_int_param.release()
             b_rhot.release()
 
+            dt1, t0 = time() - t0, time()
+
             # XXX
             # - system dependent integration parameters
             rho0 = h_rhot[-1]
             i0, i1 = i + 1, i + h_int_param_step['INT_N'][0]
             xreader((i0, i1), None, h_rhot[1:h_int_param_step['INT_N'][0]])
+            dt2 = time() - t0
 
-            tf = time()
             # print something interesting
             if DEBUG:
-                max_steps_chunk_size = np.max(h_int_param_step['INT_N']) - i;
-                print_debug("{}-{}: {} steps, took {:.4f}s".format(
-                    i0, i1,
-                    max_steps_chunk_size,
-                    tf - t0))
+                print_debug("{:.2f}% [{}-{}] - took GPU:{:.4f}s CPU:{:.4f}s".format(
+                    i/np.max(h_int_param['INT_N']),
+                    i0,
+                    i1,
+                    dt1,
+                    dt2,
+                ))
 
         if reader is not None:
             return None
@@ -899,7 +906,7 @@ def r_tmpl(src, **kwargs):
     return r_cltypes(src)
 
 def assert_rho_hermitian(state):
-    idx = np.where(np.abs(np.transpose(state, (00, 2, 1)).conj() - state) > 0.000001)[0]
+    idx = np.where(np.abs(np.transpose(state, (0, 2, 1)).conj() - state) > 0.000001)[0]
     assert len(idx) == 0, "safety abort - state[{}] not hermitian".format(idx[0])
 
 

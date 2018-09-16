@@ -299,6 +299,6 @@ def create_ctree(f):
             read.append(current)
 
         else:
-            raise RuntimeError('did not understand?!')
+            raise RuntimeError('did not understand?! {}'.format(a))
 
     return current

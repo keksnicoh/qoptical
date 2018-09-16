@@ -79,7 +79,9 @@ def persist_fs(name, **data):
 
     for json_file in meta['json_files']:
         with open(os.path.join(name, json_file + '.json'), 'w') as rf:
-            json.dump(data[json_file], rf)
-
+            try:
+                json.dump(data[json_file], rf)
+            except TypeError:
+                raise ValueError('could no serialize {} ({})'.format(json_file, type(data[json_file])))
     for np_file in meta['np_files']:
         np.save(os.path.join(name, np_file + '.npy'), data[np_file])

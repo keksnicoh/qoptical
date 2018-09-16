@@ -94,8 +94,10 @@ def boson_stat(T):
     """
     if T == 0:
         return lambda E: 0.0
-    return lambda E: 1.0 / (np.exp(E / T) - 1 + 0.0000000001)
-
+    try:
+        return lambda E: 1.0 / (np.exp(E / T) - 1 + 0.0000000001)
+    except RuntimeWarning:
+        raise RuntimeWarning("E={}, T={}".format(E, T))
 
 def vectorize(x, dtype=None):
     if isinstance(x, list):
