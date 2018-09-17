@@ -14,16 +14,93 @@ import os
 module_path = os.path.abspath(os.path.join('..'))
 if module_path not in sys.path:
     sys.path.append(module_path)
-module_path = os.path.abspath(os.path.join('..', '..', 'lib'))
-if module_path not in sys.path:
-    sys.path.append(module_path)
 from qoptical.math import dft_single_freq_window
-from lib.phasespace import *
-from lib.probing import opmesolve_probe_voltage
 import qoptical as qo
-DFLOAT   = np.float32
+from qoptical import thermal_dist, ketbra
+from qoptical.util import vectorize
+from qoptical.kernel_opencl import opmesolve_cl_expect
 DCOMPLEX = np.complex64
+DFLOAT   = np.float32
 
+def opmesolve_probe_voltage(tr, reduced_system, hu_probe, hu_drive, Oobs, params, t_bath, y_0, rec_skip=1, ctx=None, queue=None):
+    """ evolves the system under a probing **hu_probe** and a driving **hu_drive**
+        on the time gatter *tr* `(t0, tf, dt)`. The result is projected on the
+        expectation value of **Oobs**.
+
+        Arguments:
+        ----------
+
+        :tr: time gatter
+
+        :reduced_system: the reduced system representing the optical
+            jump lattice and the stationary hamilton h_0.
+
+        :hu_probe: tuple of (Hu, f_coeff) where Hu is a hermitian hamilton
+            and f_coeff is the coefficient function, this will lead to a term
+            in the unitary part of the evolution: -i[Hu * f_coeff(t), rho(t)].
+
+        :hu_drive: optional, like hu_probe.
+
+        :Oobs: the observable to be measured.
+
+        :params: optional, system parameters.
+
+        :t_bath: bath temperature. The initial state is setup to be thermal state
+            at bath temperature.
+
+        :y_0: global damping coeff.
+
+        """
+    ev, s = reduced_system.ev, reduced_system.s
+
+    rho0 = [
+        sum(p * ketbra(s, i)
+        for (i, p) in enumerate(thermal_dist(ev, t)))
+        for t in vectorize(t_bath)
+    ]
+
+    OHul = [hu_probe]
+    if hu_drive is not None:
+        OHul.append(hu_drive)
+
+    return opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oobs, OHul, params, rec_skip=rec_skip, ctx=ctx, queue=queue)
+
+def Ovoid(n, dtype):
+    return np.zeros(n ** 2, dtype=dtype).reshape((n, n))
+
+def Odn2(n, dtype):
+    o, odd, m2 = Ovoid(n, dtype), n%2 != 0, int(n / 2)
+    kr = np.array([i for i in range(-m2, m2 + 1) if odd or i != 0])
+    o[np.arange(n), np.arange(n)] = kr**2
+    return o
+
+def Odn(n, dtype):
+    o, odd, m2 = Ovoid(n, dtype), n%2 != 0, int(n / 2)
+    kr = np.array([i for i in range(-m2, m2 + 1) if odd or i != 0])
+    o[np.arange(n), np.arange(n)] = kr
+    return o
+
+def Ophi(n, dtype):
+    o, r = Ovoid(n, dtype), np.arange(n)
+    for i in r:
+        for j in r:
+            if j-i == 0:
+                o[i,i] = np.pi
+            else:
+                even = (j-i+1) % 2 == 0
+                o[i,j] = 1.0j*(-1 + 2*even) / (j-i)
+    return o
+
+def Ocos(n, dtype):
+    o, r = Ovoid(n, dtype), np.arange(n-1)
+    o[r, r + 1] = o[r + 1, r] = 0.5
+    return o
+
+def Osin(n, dtype):
+    o, r = Ovoid(n, dtype), np.arange(n-1)
+    o[r, r + 1] = -0.5j
+    o[r + 1, r] = 0.5j
+    return o
 
 EC = 1
 tp0 = 0
