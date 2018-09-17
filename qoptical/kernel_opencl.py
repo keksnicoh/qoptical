@@ -66,7 +66,7 @@ DTYPE_INTEGRATOR_PARAM = np.dtype([
     ('INT_N',  np.int32),
 ])
 
-def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[], params=None, rec_skip=1):
+def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[], params=None, rec_skip=1, ctx=None, queue=None):
     """ evolves expectation value on time gatte `tr`.
 
         Parameters:
@@ -115,7 +115,7 @@ def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[],
 
     ht_coeff = [ht[1] for ht in OHul]
     ht_op    = [ht[0] for ht in OHul]
-    kernel = OpenCLKernel(reduced_system, t_sysparam=t_param, ht_coeff=ht_coeff)
+    kernel = OpenCLKernel(reduced_system, t_sysparam=t_param, ht_coeff=ht_coeff, ctx=ctx, queue=queue)
     kernel.compile()
 
     kernel.sync(state=rho0, t_bath=t_bath, y_0=y_0, sysparam=params, htl=ht_op)
@@ -127,7 +127,6 @@ def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[],
     def reader(idx, tgrid, rho_eb):
         sidx = (int(np.ceil(idx[0] / rec_skip)), int(np.ceil(idx[1] / rec_skip)))
         nrho = result[sidx[0]:sidx[1]].shape[0]
-        print(nrho, sidx[1]-sidx[0])
         result[sidx[0]:sidx[1]] = np.trace(rho_eb[::rec_skip][:nrho] @ Oeb, axis1=2, axis2=3)
 
     # run

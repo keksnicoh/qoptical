@@ -1,0 +1,7 @@
+build-essential
+python3-pip
+opencl-headers
+clinfo
+opencl-headers
+nvidia-headless-390
+nvidia-opencl-dev
