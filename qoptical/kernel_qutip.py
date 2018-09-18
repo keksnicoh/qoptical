@@ -14,7 +14,7 @@ class QutipKernel():
     """ Performs sequential integration of multiple states
         using QuTip: http://qutip.org/docs/4.1/modules/qutip/mesolve.html
     """
-    def __init__(self, system):
+    def __init__(self, system, n_htl=0, n_e_ops=0):
         """ create QutipKernel for given ``system`` """
         # api state
         self.system    = system
@@ -22,6 +22,8 @@ class QutipKernel():
         self.t_bath    = None
         self.y_0       = None
         self.htl       = None
+        self.n_htl     = n_htl
+        self.n_e_ops   = n_e_ops
         self.hu        = npmat_manylike(self.system.h0, [self.system.h0])
         self.args      = None
 
@@ -101,15 +103,15 @@ class QutipKernel():
             #assert np.all(self.args >= 0)
 
         # XXX todo make observables listable
-        if self.system.n_e_ops > 0 and e_ops is not None:
+        if self.n_e_ops > 0 and e_ops is not None:
             self.e_ops = npmat_manylike(self.system.h0, e_ops)
-            assert len(self.e_ops) == self.system.n_e_ops
+            assert len(self.e_ops) == self.n_e_ops
             self.q_e_ops = [Qobj(e) for e in self.e_ops]
 
         # XXX todo make time dependent operators listable
-        if self.system.n_htl > 0 and htl is not None:
+        if self.n_htl > 0 and htl is not None:
             self.htl = list(htl)
-            assert len(self.htl) == self.system.n_htl
+            assert len(self.htl) == self.n_htl
             self.q_htl = [[Qobj(sqmat(ht[0])), ht[1]] for ht in self.htl]
 
 
@@ -169,13 +171,13 @@ class QutipKernel():
             if y_0 is None and self.y_0 is None:
                 raise RuntimeError('y_0 must be defined at least once.')
 
-        if self.system.n_htl > 0 and htl is None and self.htl is None:
+        if self.n_htl > 0 and htl is None and self.htl is None:
             raise RuntimeError('htl must be defined at least once.')
 
-        if self.system.n_e_ops > 0 and e_ops is None and self.e_ops is None:
+        if self.n_e_ops > 0 and e_ops is None and self.e_ops is None:
             raise RuntimeError('e_ops must be defined at least once.')
 
-        if self.system.n_e_ops == 0 and e_ops is not None:
+        if self.n_e_ops == 0 and e_ops is not None:
             raise RuntimeError('e_ops is defined by reduced system n_e_ops is zero.')
 
 
@@ -192,7 +194,7 @@ class QutipKernel():
         """
         assert self.compiled and self.synced
         if sync_state is True and self.q_e_ops is not None:
-            raise ValueError('sync_state must be False if system.n_e_ops > 0.')
+            raise ValueError('sync_state must be False if n_e_ops > 0.')
 
         # result data preparation
         tstate = None

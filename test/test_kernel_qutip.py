@@ -2,11 +2,11 @@
 """ test the QuTip reference kernel implementation.
     :author: keksnicoh
 """
-from qoptical.opme import ReducedSystem
+import numpy as np
+import pytest
+from qoptical.hamilton import ReducedSystem
 from qoptical.kernel_qutip import QutipKernel
 from qoptical.util import ketbra, eigh
-import pytest
-import numpy as np
 
 EQ_COMPARE_TOL = 0.000001
 
@@ -78,7 +78,7 @@ def test_jump():
             [0, 0, 0, 0],
         ]) == lindblads[3][1].full())
 
-def test_qutip_kernel_simple_hosci():
+def test_qutip_kernel_single_frequency_transtions():
     """ in this test we setup a three state
         system where the energy levels are equidistant
         with deltaE = w0
@@ -102,7 +102,11 @@ def test_qutip_kernel_simple_hosci():
     ]
 
     # create system, only w0 transitions are allowed
-    system = ReducedSystem(h0, tw=[w0])
+    system = ReducedSystem(h0, [
+        0, 1, 0,
+        1, 0, 1,
+        0, 1, 0
+    ])
 
     # create & compile qutip kernel
     kernel = QutipKernel(system)
@@ -165,7 +169,11 @@ def test_qutip_kernel_simple_htl():
         0, 0, 0,
         0, 2, 0,
         0, 0, 4,
-    ], tw=[2], n_htl=1, n_e_ops=2))
+    ], [
+        0, 1, 0,
+        1, 0, 1,
+        0, 1, 0,
+    ]), n_htl=1, n_e_ops=2)
     kernel.compile()
     kernel.sync(
         state = [
@@ -197,7 +205,11 @@ def test_qutip_run_stateless():
         0, 0, 0,
         0, 2, 0,
         0, 0, 4,
-    ], tw=[2]))
+    ], [
+        0, 1, 0,
+        1, 0, 1,
+        0, 1, 0,
+    ]))
     kernel.compile()
     kernel.sync(
         state  = [0, 0, 0, 0, 1, 0, 0, 0, 0],
@@ -215,7 +227,11 @@ def test_qutip_fail_due_sync_with_e_ops():
         0, 0, 0,
         0, 2, 0,
         0, 0, 4,
-    ], tw=[2], n_e_ops=1))
+    ], [
+        0, 1, 0,
+        1, 0, 1,
+        0, 1, 0,
+    ]), n_e_ops=1)
     kernel.compile()
     kernel.sync(
         state  = [0, 0, 0, 0, 1, 0, 0, 0, 0],

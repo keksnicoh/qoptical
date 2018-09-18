@@ -19,7 +19,7 @@ __kernel void opmesolve_rk4_eb(
     __global const $(cfloat_t) *hu,/*{arg_htl}*/
     __global const t_jump *jb,
     __global const t_int_parameters *int_parameters,/*{arg_sysparam}*/
-    __global $(cfloat_t) *result,
+    __global $(cfloat_t) *result,/*{arg_debug}*/
     const int n0
 ) {
     $(float) t;
@@ -42,7 +42,7 @@ __kernel void opmesolve_rk4_eb(
     __out_len   = get_num_groups(0) * IN_BLOCK_SIZE;
 
     // init local memory
-    prm          = int_parameters[GID];
+    prm          = int_parameters[0];
     //_rho         = result[__out_len * (n0 - 1) + __in_offset + __item]; // t=0
     _rho         = result[ __in_offset + __item]; // t=0
     _h0[__item]  = hu[__in_offset + __item];
@@ -52,9 +52,10 @@ __kernel void opmesolve_rk4_eb(
     // loop init
     //t  = prm.INT_T0 + n0 * prm.INT_DT;
     t  = prm.INT_T0;
-    n  = 1;
+    n  = 0;
     //n  = n0;
     while (n < prm.INT_N) {
+        /*{debug_hook_0}*/
         // k1
         k1 = $(cfloat_fromreal)(0.0f);
         _rky[__item] = _rho;
@@ -88,8 +89,9 @@ __kernel void opmesolve_rk4_eb(
 
         _rho.real += prm.INT_DT * (b1 * k1.real + b2 * k2.real + b3 * k3.real);
         _rho.imag += prm.INT_DT * (b1 * k1.imag + b2 * k2.imag + b3 * k3.imag);
-        result[__out_len * n + __in_offset + __item] = _rho;
-        result[__out_len * n + __in_offset + __itemT] = $(cfloat_conj)(_rho);
+        result[__out_len * (n + 1) + __in_offset + __item] = _rho;
+        result[__out_len * (n + 1) + __in_offset + __itemT] = $(cfloat_conj)(_rho);
+        /*{debug_hook_1}*/
         barrier(CLK_LOCAL_MEM_FENCE);
         t = prm.INT_T0 + (++n) * prm.INT_DT;
     }

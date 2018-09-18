@@ -43,14 +43,15 @@
 
     :author: keksnicoh
 """
-import pyopencl as cl
-import pyopencl.tools
-import numpy as np
-import itertools, os, dis
-from .f2cl import f2cl
-from .settings import *
-from .util import *
 from time import time
+import itertools, os
+import numpy as np
+import pyopencl as cl
+from .f2cl import f2cl
+from .settings import DTYPE_FLOAT, DEBUG, print_debug, DTYPE_COMPLEX
+from .util import (
+    vectorize, npmat_manylike, InconsistentVectorSizeError,
+    boson_stat, time_gatter)
 
 mf = cl.mem_flags
 
@@ -66,7 +67,18 @@ DTYPE_INTEGRATOR_PARAM = np.dtype([
     ('INT_N',  np.int32),
 ])
 
-def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[], params=None, rec_skip=1, ctx=None, queue=None):
+def opmesolve_cl_expect(
+    tr,
+    reduced_system,
+    t_bath,
+    y_0,
+    rho0,
+    Oexpect,
+    OHul=[],
+    params=None,
+    rec_skip=1,
+    ctx=None,
+    queue=None):
     """ evolves expectation value on time gatte `tr`.
 
         Parameters:
@@ -117,8 +129,6 @@ def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[],
     ht_op    = [ht[0] for ht in OHul]
     kernel = OpenCLKernel(reduced_system, t_sysparam=t_param, ht_coeff=ht_coeff, ctx=ctx, queue=queue)
     kernel.compile()
-    print(kernel.c_kernel)
-    dd()
 
     kernel.sync(state=rho0, t_bath=t_bath, y_0=y_0, sysparam=params, htl=ht_op)
 
@@ -126,7 +136,7 @@ def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[],
     tlist  = np.arange(*tr)[::rec_skip]
     result = np.zeros((len(tlist), kernel.N), dtype=np.complex64)
     Oeb    = kernel.eb(Oexpect)
-    def reader(idx, tgrid, rho_eb):
+    def reader(idx, _, rho_eb):
         sidx = (int(np.ceil(idx[0] / rec_skip)), int(np.ceil(idx[1] / rec_skip)))
         nrho = result[sidx[0]:sidx[1]].shape[0]
         result[sidx[0]:sidx[1]] = np.trace(rho_eb[::rec_skip][:nrho] @ Oeb, axis1=2, axis2=3)
@@ -136,24 +146,9 @@ def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[],
 
     return result
 
+
 def opmesolve_opencl():
     pass
-
-class OpenCLKernelResult():
-    def __init__(self, mb, h_tstate):
-        self.mb = mb
-        self.h_tstate = h_tstate
-
-        #self.tlist = tlist
-
-    def tstate(self):
-        """ returns tstate in the original basis """
-      #  if self.h_tstate is None:
-      #      self.h_tstate = self. self.mb.T @ self.h_tstate_eb @ self.mb.conj()
-        return self.h_tstate
-
-    def expect(self, *operators):
-        h_expect = np.zeros((len(operators), self.tstate_shape), dtype=np.complex64)
 
 
 class OpenCLKernel():
@@ -195,15 +190,30 @@ class OpenCLKernel():
         self.system         = system
         self.optimize_jumps = optimize_jumps
         self.t_sysparam     = t_sysparam
-        self.ctx            = ctx or self._ctx()
+        self.ctx            = ctx or _ctx()
         self.queue          = queue or cl.CommandQueue(self.ctx)
 
         self.ev  = None # eigh
         self._mb = None # base transformation matrix
 
-        self.c_kernel      = None # generated kernel c code
+        self.prg = None
+        self.c_kernel = None # generated kernel c code
         self.cl_local_size = None # due to hermicity we only need M*(M+1)/2 work-items
                                   # where M is dimH
+
+        # -- debug members
+        # debug_hook_1 is rendered at the end of the loop just
+        # before time inc.
+        self.c_debug_hook_1 = None
+        # extra buffer configuration,
+        #
+        # e.g.
+        #
+        #   [
+        #       ('__global const float *dork', some_cl_buffer),
+        #       ...
+        #   ]
+        self.cl_debug_buffers = []
 
         self.dimH = None
         self.N = None
@@ -216,26 +226,26 @@ class OpenCLKernel():
         self.jmp_instr = None # jumping instructions for all cells
 
         # synced, vectorized state
-        self.hu       = None
-        self.state    = None
-        self.t_bath   = None
-        self.y_0      = None
-        self.htl      = None
+        self.hu = None
+        self.state = None
+        self.t_bath = None
+        self.y_0 = None
+        self.htl = None
         self.sysparam = None
 
         # host buffers and gpu buffers
         self.h_sysparam = None
-        self.h_htl      = None
-        self.h_hu       = None
-        self.h_state    = None
-        self.h_cl_jmp   = None
-        self.h_y_0      = None
-        self.h_t_bath   = None
-        self.h_cl_jmp   = None
-        self.b_htl      = None
+        self.h_htl = None
+        self.h_hu = None
+        self.h_state = None
+        self.h_cl_jmp = None
+        self.h_y_0 = None
+        self.h_t_bath = None
+        self.h_cl_jmp = None
+        self.b_htl = None
         self.b_sysparam = None
-        self.b_hu       = None
-        self.b_cl_jmp   = None
+        self.b_hu = None
+        self.b_cl_jmp = None
 
         self.result = None
 
@@ -259,7 +269,8 @@ class OpenCLKernel():
 
 
     def __del__(self):
-        DEBUG and print_debug('release buffers')
+        if DEBUG:
+            print_debug('release buffers')
         self.b_hu.release()
         if self.b_htl is not None:
             for b_ht in self.b_htl:
@@ -323,6 +334,14 @@ class OpenCLKernel():
         r_define = ""
         # thread layout
         r_tl = ""
+        # debug code
+        r_arg_debug = ""
+        r_debug_hook_1 = self.c_debug_hook_1 or ''
+
+        # ---- DEBUG ARGS
+
+        if len(self.cl_debug_buffers):
+            r_arg_debug = "\n    " + ",\n    ".join(x[0] for x in self.cl_debug_buffers) + ','
 
         # ---- STRUCTS
 
@@ -377,7 +396,14 @@ class OpenCLKernel():
         # -- MAIN MAKRO
 
         # render R(K) macro content.
-        DEBUG and print_debug("precomiler: generating 1 x H_un, {} x H_t, {} x jump operations.", n_htl, self.jmp_n)
+
+        if DEBUG:
+            print_debug(
+                "precomiler: generating 1 x H_un, {} x H_t, {} x jump operations.",
+                n_htl,
+                self.jmp_n
+            )
+
         cx_unitary = ("K = $(cfloat_add)(K, $(cfloat_mul)(ihbar, "
                       "$(cfloat_sub)($(cfloat_mul)(HU(__idx, {i}), R({i}, __idy)), "
                       "$(cfloat_mul)(HU({i}, __idy), R(__idx, {i})))));");
@@ -391,20 +417,20 @@ class OpenCLKernel():
         # -- Contants
 
         r_define = '\n'.join('#define {} {}'.format(*df) for df in [
-            ('NATURE_HBAR',   r_clfloat(1)),
+            ('NATURE_HBAR', r_clfloat(1)),
             ('IN_BLOCK_SIZE', r_clint(M**2)),
-            ('THREAD_X',      r_clint(M)),
-            ('N_JUMP',        r_clint(self.jmp_n)),
-            ('N_JUMP2',       r_clint(self.jmp_n**2)),
-            ('HDIM',          r_clint(M)),
-            ('LOCAL_SIZE',    r_clint(self.cl_local_size)),
+            ('THREAD_X', r_clint(M)),
+            ('N_JUMP', r_clint(self.jmp_n)),
+            ('N_JUMP2', r_clint(self.jmp_n**2)),
+            ('HDIM', r_clint(M)),
+            ('LOCAL_SIZE', r_clint(self.cl_local_size)),
             # butcher
-            ('b1',            r_clfrac(1.0, 6.0)),
-            ('b2',            r_clfrac(4.0, 6.0)),
-            ('b3',            r_clfrac(1.0, 6.0)),
-            ('a21',           r_clfloat(0.5)),
-            ('a31',           r_clfloat(-1.0)),
-            ('a32',           r_clfloat(2.0)),
+            ('b1', r_clfrac(1.0, 6.0)),
+            ('b2', r_clfrac(4.0, 6.0)),
+            ('b3', r_clfrac(1.0, 6.0)),
+            ('a21', r_clfloat(0.5)),
+            ('a31', r_clfloat(-1.0)),
+            ('a32', r_clfloat(2.0)),
         ])
 
         # -- Thread Layout
@@ -424,11 +450,15 @@ class OpenCLKernel():
                                     htl_priv     = r_htl_priv,
                                     htl_macro    = r_htl,
                                     arg_htl      = r_arg_htl,
+                                    arg_debug    = r_arg_debug,
+                                    debug_hook_1 = r_debug_hook_1,
                                     tl           = r_tl)
 
-        DEBUG and print_debug(
-            "generated kernel: {} lines. Compiling...",
-            self.c_kernel.count("\n") + 1)
+        if DEBUG:
+            print_debug(
+                "generated kernel: {} lines. Compiling...",
+                self.c_kernel.count("\n") + 1
+            )
 
         self.prg = cl.Program(self.ctx, self.c_kernel).build()
 
@@ -471,7 +501,8 @@ class OpenCLKernel():
         # if y_0 and t_bath is normalized we can create the jumping
         # instructions buffer.
         if self.h_y_0 is not None and self.h_t_bath is not None:
-            DEBUG and print_debug('compute jumping structure...')
+            if DEBUG:
+                print_debug('compute jumping structure...')
             self.h_cl_jmp = self.create_h_cl_jmp()
             self.b_cl_jmp = self.arr_to_buf(self.h_cl_jmp, readonly=True)
 
@@ -486,42 +517,61 @@ class OpenCLKernel():
                 for h_ht in self.h_htl
             ]
 
+    def run(self, trange, steps_chunk_size=1e4):
+        """ runs the evolutions within given **trange**
 
-    def run(self, trange, steps_chunk_size=1e4, reader=None):
-        """ runs the current synced state for given tranges
-            and returns the list of states at each time step.
+            Arguments:
+            ----------
+
+            :trange: the time gatter (t0, tf, dt) where the final
+                state of the calculation will be rho(tf) and the given
+                initial state is rho(t0)
+
+            :steps_chunk_size: how many RK4 loops are executed
+                within one OpenCL kernel invokation.
+
+            This function returns a generator so the actual progress
+            can be controlled from outside.
+
+            Example:
+
+            ```python
+                kernel.sync(state=rho, ...)
+                for idx, tlist, rho_eb in kernel.run((0, 0.1, 0.01), steps_chunk_size=4):
+                    print(idx)
+                    print(tlist)
+                    # do something with rho_eb...
+
+                # result:
+                # (1, 4)
+                # [0.001 0.002 0.003 0.004]
+                # (5, 8)
+                # [0.005 0.006 0.007 0.008]
+                # (9, 10)
+                # [0.009 0.01 ]
+
+            ```
             """
         assert self.h_t_bath is not None, "t_bath was not synced."
         assert self.h_y_0 is not None,    "y_0 was not synced."
         assert self.h_state is not None,  "state was not synced."
         assert self.h_hu is not None,     "hu was not synced."
         assert self.h_cl_jmp is not None, "h_cl_jmp was not synced."
+
         steps_chunk_size = int(steps_chunk_size)
 
         # state must be hermitian + get the trace so we can
         # check it against the trace of the states at all times.
         assert_rho_hermitian(self.h_state)
-        trace0 = np.trace(self.h_state, axis1=1, axis2=2)
 
         trange      = self.normalize_trange(trange)
         h_int_param = self._create_int_param(trange)
         res_len     = max(r['INT_N'] for r in h_int_param)
 
-        if reader is None:
-            h_tstate    = np.zeros((res_len+1, *self.h_state.shape), dtype=self.h_state.dtype)
-            h_tstate[0] = self.h_state # rho at t=0
-
-            def xreader(idx, tgrid, rho_eb):
-                h_tstate[idx[0]:idx[1]] = self._mb.T @ rho_eb @ self._mb.conj()
-        else:
-            xreader = reader
 
         rho0 = self.h_state
         h_rhot = np.zeros((steps_chunk_size + 1, *self.h_state.shape), dtype=self.h_state.dtype)
-     #   b_rhot = self.arr_to_buf(h_rhot)
-
         b_int_param = self.arr_to_buf(h_int_param, readonly=True)
-       # b_tstate    = self.arr_to_buf(h_tstate)
 
         # create argument buffer tuple
         def make_buffies(b_int_param, b_rhot):
@@ -531,7 +581,7 @@ class OpenCLKernel():
             bufs += (self.b_cl_jmp, b_int_param, )
             if self.b_sysparam is not None:
                 bufs += (self.b_sysparam, )
-            bufs += (b_rhot, )
+            bufs += (b_rhot, *[x[1] for x in self.cl_debug_buffers])
             return bufs
 
 
@@ -541,11 +591,14 @@ class OpenCLKernel():
         work_layout = (self.h_state.shape[0], self.cl_local_size), \
                       (1, self.cl_local_size)
         step_range = np.arange(0, res_len -1, steps_chunk_size)
-        DEBUG and print_debug("run kernel global={}, local={}".format(*work_layout))
-        for j, i in enumerate(step_range):
+
+        if DEBUG:
+            print_debug("run kernel global={}, local={}".format(*work_layout))
+
+        for i in step_range:
             # update integration parameters to current chunk.
             h_int_param_step['INT_T0'] = i * h_int_param_step['INT_DT']
-            h_int_param_step['INT_N'] = np.minimum(steps_chunk_size + 1, h_int_param['INT_N'] - i)
+            h_int_param_step['INT_N'] = np.minimum(steps_chunk_size, h_int_param['INT_N'] - i)
 
             h_rhot    = np.zeros((steps_chunk_size + 1, *self.h_state.shape), dtype=self.h_state.dtype)
             h_rhot[0] = rho0
@@ -568,7 +621,8 @@ class OpenCLKernel():
             # - system dependent integration parameters
             rho0 = h_rhot[-1]
             i0, i1 = i + 1, i + h_int_param_step['INT_N'][0]
-            xreader((i0, i1), None, h_rhot[1:h_int_param_step['INT_N'][0]])
+            tlist = np.arange(i0, i1 + 1) * h_int_param_step['INT_DT'][0]
+            yield (i0, i1), tlist, h_rhot[1:(i1 - i0 + 2)]
             dt2 = time() - t0
 
             # print something interesting
@@ -580,15 +634,6 @@ class OpenCLKernel():
                     dt1,
                     dt2,
                 ))
-
-        if reader is not None:
-            return None
-
-        self.result = OpenCLKernelResult(self._mb, h_tstate[:-1])
-
-        # check whether the t=0 state was used correctly.
-        assert np.all(self.h_state - h_tstate[0] < 0.000001), "state corrupted."
-        return self.result
 
 
     def arr_to_buf(self, arr, readonly=False):
@@ -633,6 +678,44 @@ class OpenCLKernel():
         return fj
 
 
+    def reader_tfinal_rho(self, g):
+        """ returns the final state in basis
+            of the reduced system.
+            """
+
+        r = None
+        for r in g:
+            pass
+
+        if r is None:
+            raise RuntimeError('empty generator given.')
+
+        t, rho_eb = r[1:3]
+        return t[-1], self._mb.T @ rho_eb[-1] @ self._mb.conj()
+
+
+    def reader_rho_t(self, g):
+        """ reads out rho at all times in basis of the
+            reduced system.
+            """
+        rho0 = self._mb.T @ self.h_state @ self._mb.conj()
+        rhot = rho0.reshape((1, *rho0.shape))
+        tg = np.zeros(1)
+        for idx, tlist, rho_eb in g:
+            rhot = np.concatenate((rhot, self._mb.T @ rho_eb @ self._mb.conj()))
+            tg = np.concatenate((tg, tlist))
+
+        # this is because we need 2 time steps in order to restore t0.
+        # XXX Think about apply time gatter via. sync() so we can access
+        #     the time gatter here at this point.
+        if len(tg) < 3:
+            raise RuntimeError('must proceed at least 2 steps.')
+
+        tg[0] = 2 * tg[1] - tg[2]
+
+        return tg, rhot
+
+
     def normalize_vbuffers(self):
         """ normalized vectorized buffers such that they have
             all the same number of components. This method will
@@ -660,7 +743,7 @@ class OpenCLKernel():
 
     def create_h_cl_jmp(self):
         """ create cl_jmp host buffer """
-        N, M = self.h_state.shape[0:2]
+        N = self.h_state.shape[0]
         dst = [boson_stat(t) for t in self.h_t_bath]
 
         cl_jmp = np.zeros((N, *self.jmp_instr.shape), dtype=self.__class__.DTYPE_T_JMP)
@@ -766,9 +849,9 @@ class OpenCLKernel():
                  ...
                 ]
         """
-        N, M       = self.h_state.shape[0:2]
+        N, M = self.h_state.shape[0:2]
         cl_jmp_opt = np.zeros((*cl_jmp.shape[0:3], self.jmp_n), dtype=cl_jmp.dtype)
-        allidx     = [(i, j) for j in range(M) for i in range(M)]
+        allidx = [(i, j) for j in range(M) for i in range(M)]
 
         for (k, (i, j)) in itertools.product(range(N), allidx):
             # contributing cell indices
@@ -799,16 +882,6 @@ class OpenCLKernel():
             `op` must be ndarray of shape `(M,M)` or `(N,M,M)`
             """
         return self._mb.T @ op @ self._mb.conj()
-
-
-    def _ctx(self):
-        """ returs the first available gpu content
-            """
-        platforms = cl.get_platforms()
-        assert len(platforms) > 0
-        gpu_devices = list(d for d in platforms[0].get_devices() if d.type == cl.device_type.GPU)
-        assert len(gpu_devices) > 0
-        return cl.Context(devices=gpu_devices)
 
 
     def _compile_struct(self, name, dtype):
@@ -843,7 +916,7 @@ class OpenCLKernel():
     def _create_int_param(self, trange):
         """ create integrator parameters from normalized `trange` """
         return np.array([
-            (tr['INT_T0'], tr['INT_DT'], len(np.arange(*tr)))
+            (tr['INT_T0'], tr['INT_DT'], len(time_gatter(*tr)) - 1)
             for tr in trange
         ], dtype=DTYPE_INTEGRATOR_PARAM)
 
@@ -894,6 +967,16 @@ def r_cltypes(src, double_precision=False):
     return src
 
 
+def _ctx():
+    """ returs the first available gpu context
+        """
+    platforms = cl.get_platforms()
+    assert len(platforms) > 0
+    gpu_devices = list(d for d in platforms[0].get_devices() if d.type == cl.device_type.GPU)
+    assert len(gpu_devices) > 0
+    return cl.Context(devices=gpu_devices)
+
+
 def r_tmpl(src, **kwargs):
     """ renders a string containing placeholders like
 
@@ -909,16 +992,3 @@ def r_tmpl(src, **kwargs):
 def assert_rho_hermitian(state):
     idx = np.where(np.abs(np.transpose(state, (0, 2, 1)).conj() - state) > 0.000001)[0]
     assert len(idx) == 0, "safety abort - state[{}] not hermitian".format(idx[0])
-
-
-def assert_tstate_rho_hermitian(ts):
-    idx = np.where(np.abs(np.transpose(ts, (0, 1, 3, 2)).conj() - ts) > 0.0001)[0]
-    if len(idx) != 0:
-        state = ts[idx[0]]
-        sidx = np.where(np.abs(np.transpose(state, (0, 2, 1)).conj() - state) > 0.000001)[0]
-        assert False, "safety abort - result[{},{}] not hermitian".format(idx[0], sidx[0])
-
-
-def assert_tstate_rho_trace(expected, ts):
-    trace = np.trace(ts, axis1=2, axis2=3)
-   # assert np.all(np.abs(trace - expected) < 0.0001), "safety abort - trace changed."

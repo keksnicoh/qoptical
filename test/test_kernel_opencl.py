@@ -1,25 +1,28 @@
 # -*- coding: utf-8 -*-
 """ OpenCL Kernel implementation tests.
 """
-from qoptical.opme import ReducedSystem, opmesolve
+from qoptical.opme import opmesolve
+from qoptical.hamilton import ReducedSystem
 from qoptical.kernel_qutip import QutipKernel
+from numpy.testing import assert_allclose
 from qoptical.kernel_opencl import OpenCLKernel
 from qoptical.util import ketbra, eigh
+import pyopencl as cl
 import pytest
 import numpy as np
 
-def test_von_neumann():
-    """ we integrate von Neumann equation to test the
-        following content:
+TOLS = {'atol': 1e-5, 'rtol': 1e-7}
 
-        - reduced system with no transitions
-          => von Neumann
+def test_von_neumann():
+    """ integrate von Neumann equation to test the following:
+
+        - reduced system with no transitions => von Neumann
         - evolve multiple states
         - all states at all times t should be recorded
           and be available in `result.tstate`
         - we test some physical properties of the results
           i)  desity operator properties at all t
-          ii) behavior of coherent elements (rotate at certain w_ij)
+          ii) behavior of coherent elements (rotatation at certain w_ij)
 
         """
 
@@ -30,7 +33,9 @@ def test_von_neumann():
           0, 1, 0, 0,
           0, 0, 3, 0,
           0, 0, 0, 5.5,]
-    system = ReducedSystem(h0, tw=[])
+
+    # dipole coupling = 0 => no dissipative dynamics
+    system = ReducedSystem(h0, np.zeros_like(h0))
     kernel = OpenCLKernel(system)
     kernel.compile()
 
@@ -56,15 +61,13 @@ def test_von_neumann():
            0, 0, 0, 0,
            0, 0, 0, 0,
            0, 0, 0, 0,]
-    kernel.sync(state=[ground_state, gs2], t_bath=0, y_0=0)
-    ts = kernel.run(tr).tstate()
 
-    # Debug:
-    #qkernel = QutipKernel(system)
-    #qkernel.compile()
-    #qkernel.sync(state=[ground_state, gs2], t_bath=0, y_0=1)
-    #result = qkernel.run(np.arange(*tr))
-    #print(np.round(result.state, 2))
+    # note that for y_0=0.0 the dissipator would vanish as well.
+    kernel.sync(state=[ground_state, gs2], t_bath=0, y_0=1.0)
+    tlist, ts = kernel.reader_rho_t(kernel.run(tr))
+
+    # test times
+    assert_allclose(np.arange(tr[0], tr[1] + tr[2], tr[2]), tlist)
 
     assert tstate_rho_hermitian(ts)
     assert tstate_rho_trace(1.0, ts)
@@ -134,23 +137,29 @@ def test_von_neumann_basis():
     ], dtype=np.complex64).reshape((3, 3))
     states = [rho1, rho2]
 
-    system = ReducedSystem(h0, tw=[])
+    system = ReducedSystem(h0)
     kernel = OpenCLKernel(system)
     kernel.compile()
+
+    # we archive von Neumann by setting global damping to y_0=
+    # which leads to supression of dissipative terms
     kernel.sync(state=states, y_0=0, t_bath=0)
-    ts = kernel.run(tr).tstate()
+    tlist, ts = kernel.reader_rho_t(kernel.run(tr))
+
+    # test times
+    assert_allclose(np.arange(tr[0], tr[1] + tr[2], tr[2]), tlist)
 
     # test density operator
     assert tstate_rho_hermitian(ts[1:2])
     assert tstate_rho_trace(1.0, ts)
 
     # test stationary state
-    assert np.allclose(ts[-1][0], rho1)
+    assert_allclose(ts[-1][0], rho1, **TOLS)
 
     # test against reference
-    resultr = opmesolve(h0, states, 0, 0, tw=[], tlist=np.arange(*tr), kernel="QuTip")
-    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
+    resultr = opmesolve(h0, states, 0, 0, tw=[], tr=tr, kernel="QuTip")
+    assert_allclose(ts[-1][0], resultr.state[0], **TOLS)
+    assert_allclose(ts[-1][1], resultr.state[1], **TOLS)
 
 def test_two_level_TZero():
     """ most simple dissipative case.
@@ -175,19 +184,24 @@ def test_two_level_TZero():
         # T=t + coherence
         [0.75, 0.5, 0.5, 0.25],
     ]
-    sys = ReducedSystem(h0, tw=[OMEGA])
-    kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
+    kernel = OpenCLKernel(ReducedSystem(h0, [
+        0, 1,
+        1, 0,
+    ]))
     kernel.compile()
     kernel.sync(state=states, y_0=y_0, t_bath=0)
-    ts = kernel.run(tr).tstate()
+    tf, rhof = kernel.reader_tfinal_rho(kernel.run(tr))
+
+    # test final time
+    assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=0, y_0=y_0, tw=[OMEGA], tlist=np.arange(*tr), kernel="QuTip")
+    resultr = opmesolve(h0, states, t_bath=0, y_0=y_0, tw=[OMEGA], tr=tr, kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][2] - resultr.state[2]) < REF_TOL)
+    assert_allclose(rhof[0], resultr.state[0], **TOLS)
+    assert_allclose(rhof[1], resultr.state[1], **TOLS)
+    assert_allclose(rhof[2], resultr.state[2], **TOLS)
 
 def test_three_level_TZero():
     """ two different annihilation processes A(Omega), A(2*Omega) at T=0:
@@ -224,20 +238,26 @@ def test_three_level_TZero():
         0.4, 0.2, 0.2,
         0.6, 0.2, 0.4
     ]]
-    sys = ReducedSystem(h0, tw=tw)
+    sys = ReducedSystem(h0, [
+        0, 1, 1,
+        1, 0, 1,
+        1, 1, 0,
+    ])
     kernel = OpenCLKernel(sys)
     kernel.compile()
     kernel.sync(state=states, y_0=1.0, t_bath=0)
-    ts = kernel.run(tr).tstate()
+    tf, rhof = kernel.reader_tfinal_rho(kernel.run(tr))
+
+    # test final time
+    assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=0, y_0=1.0, tw=tw, tlist=np.arange(*tr), kernel="QuTip")
+    resultr = opmesolve(h0, states, t_bath=0, y_0=1.0, tw=tw, tr=tr, kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][2] - resultr.state[2]) < REF_TOL)
-
+    assert_allclose(rhof[0], resultr.state[0], **TOLS)
+    assert_allclose(rhof[1], resultr.state[1], **TOLS)
+    assert_allclose(rhof[2], resultr.state[2], **TOLS)
 
 def test_four_level_TZero():
     """ four level system at T=0.
@@ -276,23 +296,28 @@ def test_four_level_TZero():
     kernel = OpenCLKernel(sys)
     kernel.compile()
     kernel.sync(state=states, y_0=0.15, t_bath=0)
-    ts = kernel.run(tr).tstate()
+    tf, rhof = kernel.reader_tfinal_rho(kernel.run(tr))
+
+    # test final time
+    assert np.isclose(tf, tr[1])
 
     kernel2 = OpenCLKernel(sys)
     kernel2.optimize_jumps = False
     kernel2.compile()
     kernel2.sync(state=states, y_0=0.15, t_bath=0)
-    ts2 = kernel2.run(tr).tstate()
+    tf, rhof2 = kernel.reader_tfinal_rho(kernel2.run(tr))
+
+    # test final time
+    assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=0, y_0=0.15, tlist=np.arange(*tr), kernel="QuTip")
+    resultr = opmesolve(h0, states, t_bath=0, y_0=0.15, tr=tr, kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(ts2[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts2[-1][1] - resultr.state[1]) < REF_TOL)
-
+    assert_allclose(rhof[0], resultr.state[0], **TOLS)
+    assert_allclose(rhof[1], resultr.state[1], **TOLS)
+    assert_allclose(rhof2[0], resultr.state[0], **TOLS)
+    assert_allclose(rhof2[1], resultr.state[1], **TOLS)
 
 def test_two_level_T():
     """ most simple dissipative case at finite temperature:
@@ -326,19 +351,24 @@ def test_two_level_T():
         0.0, 0.0
     ]]
 
-    sys = ReducedSystem(h0, tw=[OMEGA])
-
-    kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
+    kernel = OpenCLKernel(ReducedSystem(h0, [
+        0, 1,
+        1, 0,
+    ]))
     kernel.compile()
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath)
-    ts = kernel.run(tr).tstate()
+    tf, rhof = kernel.reader_tfinal_rho(kernel.run(tr))
+
+    # test final time
+    assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tw=[OMEGA], tlist=np.arange(*tr), kernel="QuTip")
+    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tw=[OMEGA], tr=tr, kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
+    assert_allclose(rhof[0], resultr.state[0], **TOLS)
+    assert_allclose(rhof[1], resultr.state[1], **TOLS)
+
 
 def test_three_level_T():
     """ three level system at finite temperature.
@@ -376,21 +406,28 @@ def test_three_level_T():
         0.6+0.5j, 0.2j, 0.4
     ]]
 
-    sys = ReducedSystem(h0, tw=tw)
+    sys = ReducedSystem(h0, [
+        0, 1, 1,
+        1, 0, 1,
+        1, 1, 0,
+    ])
 
     kernel = OpenCLKernel(sys)
     assert kernel.optimize_jumps
     kernel.compile()
     kernel.sync(state=states, y_0=1.0, t_bath=t_bath)
-    ts = kernel.run(tr).tstate()
+    tf, rhof = kernel.reader_tfinal_rho(kernel.run(tr))
+
+    # test final time
+    assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=1.0, tw=tw, tlist=np.arange(*tr), kernel="QuTip")
+    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=1.0, tw=tw, tr=tr, kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][2] - resultr.state[2]) < REF_TOL)
+    assert_allclose(rhof[0], resultr.state[0], **TOLS)
+    assert_allclose(rhof[1], resultr.state[1], **TOLS)
+    assert_allclose(rhof[2], resultr.state[2], **TOLS)
 
 def test_four_level_T():
     """ four level system at finite temperature T
@@ -431,22 +468,120 @@ def test_four_level_T():
     kernel.optimize_jumps = True
     kernel.compile()
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath)
-    ts = kernel.run(tr, steps_chunk_size=1111).tstate()
+    tf, rhof = kernel.reader_tfinal_rho(kernel.run(tr, steps_chunk_size=1111))
+
+    # test final time
+    assert np.isclose(tf, tr[1])
 
     kernel2 = OpenCLKernel(sys)
     kernel2.optimize_jumps = False
     kernel2.compile()
     kernel2.sync(state=states, y_0=y_0, t_bath=t_bath)
-    ts2 = kernel2.run(tr).tstate()
+    tf, rhof2 = kernel.reader_tfinal_rho(kernel2.run(tr))
+
+    # test final time
+    assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tlist=np.arange(*tr), kernel="QuTip")
+    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tr=tr, kernel="QuTip")
 
     # test against reference
-    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(ts2[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts2[-1][1] - resultr.state[1]) < REF_TOL)
+    assert_allclose(rhof[0], resultr.state[0], **TOLS)
+    assert_allclose(rhof[1], resultr.state[1], **TOLS)
+    assert_allclose(rhof2[0], resultr.state[0], **TOLS)
+    assert_allclose(rhof2[1], resultr.state[1], **TOLS)
+
+
+def test_time_gatter():
+    """ in this test two debug buffers are injected into the
+        OpenCL kernel:
+        1. Time Buffer   -  to read out internal time at each time step
+        2. Index Buffer  -  to read out internal output index at each time step.
+        we compare the values, chunkwise, against expected times and indices.
+        Also, the run() generator yields a triplet which we also test
+        in this test.
+        """
+    rs = ReducedSystem([0, 0, 0, 1], [0, 1, 1, 0])
+    kernel = OpenCLKernel(rs)
+    kernel.c_debug_hook_1 = "time_gatter[2*n+get_global_id(0)] = t + 1337 * get_global_id(0);\n" \
+        + "index_gatter[2*n+get_global_id(0)] = __out_len * n + __in_offset;\n"
+
+    # we want 5 steps & two systems, we use a buffer of shape (7, 2) to check
+    # whether the kernel overflow the 5 expected items.
+    h_time = np.zeros((7, 2), dtype=np.float32)
+    b_time = kernel.arr_to_buf(h_time)
+    h_gatter = np.zeros((7, 2), dtype=np.int32)
+    b_gatter = kernel.arr_to_buf(h_gatter)
+
+    # hook & compile
+    kernel.cl_debug_buffers = [
+        ('__global float *time_gatter', b_time),
+        ('__global int *index_gatter', b_gatter),
+    ]
+    kernel.compile()
+
+    # syn
+    kernel.sync(state=[1,0,0,0], y_0=1, t_bath=[1,1])
+
+    expected_cl_tlists = [
+        np.array([.000, .001, .002, .003, 0.004]),
+        np.array([.005, .006, .007, .008, 0.009]),
+        np.array([.010, .011, .012]),
+    ]
+
+    expected_tlists = [
+        np.array([.001, .002, .003, .004, 0.005]),
+        np.array([.006, .007, .008, .009, 0.010]),
+        np.array([.011, .012, .013]),
+    ]
+
+    dt = 0.001
+    # the first index (0) is allready occupied by the initial state
+    # given at kernel.sync we therefore expect the idx to start from 1.
+    current_index = 1;
+    for j, (idx, tlist, rho_eb) in enumerate(kernel.run((0, 0.013, dt), steps_chunk_size=5)):
+        # -- test index
+        assert idx[0] == current_index
+        i1 = idx[1] - idx[0]
+        current_index += i1 + 1
+
+        # -- test time used inside the kernel
+        # note: we measure the time before increasing it, thus
+        #  we expect a lattice like 0, 1, 2, 3 while the yielde
+        #  tlist should be 1, 2, 3, 4 as tlist corresponds to the
+        #  time at which the state rho_eb is.
+        expected_tlist_cl = expected_cl_tlists[j]
+        l = len(expected_tlist_cl)
+        cl.enqueue_copy(kernel.queue, h_time, b_time)
+        assert_allclose(expected_tlist_cl, h_time[:l, 0])
+        assert_allclose(expected_tlist_cl + 1337, h_time[:l, 1])
+        # test that buffer did not overflow
+        assert_allclose(np.zeros(7 - l), h_time[l:, 0])
+        assert_allclose(np.zeros(7 - l), h_time[l:, 1])
+        # reset time buffer
+        h_time = np.zeros_like(h_time)
+        b_time = kernel.arr_to_buf(h_time)
+        kernel.cl_debug_buffers[0] = (kernel.cl_debug_buffers[0], b_time)
+
+        # -- test time yielded from python
+        expected_tlist = expected_tlists[j]
+        l = len(expected_tlist)
+        assert_allclose(expected_tlist, tlist)
+
+        # -- test index gatter
+        cl.enqueue_copy(kernel.queue, h_gatter, b_gatter)
+        expected_gatter = np.arange(l * 2).reshape((l, 2)) * 4
+        assert_allclose(expected_gatter, h_gatter[0:len(expected_gatter)])
+        expected_empty_gatter = np.zeros((7 - l) * 2).reshape((7 - l, 2))
+        assert_allclose(expected_empty_gatter, h_gatter[len(expected_gatter):])
+
+        # reset gatter buffer
+        h_gatter = np.zeros_like(h_gatter)
+        b_gatter = kernel.arr_to_buf(h_gatter)
+        kernel.cl_debug_buffers[1] = (kernel.cl_debug_buffers[1], b_gatter)
+
+        # test rho_eb
+        assert rho_eb.shape[0] == l
 
 
 def test_two_level_T_driving():
@@ -456,7 +591,7 @@ def test_two_level_T_driving():
         """
     REF_TOL = 0.0001
     OMEGA   = 2.0
-    tr      = (0, 1.0, 0.001)
+    tr      = (0, 1.0, 0.0001)
     y_0     = 0.5
     t_bath  = 1.0
     h0      = [0, 0, 0, OMEGA]
@@ -470,15 +605,19 @@ def test_two_level_T_driving():
         ('b', np.float32, ),
     ]))
 
-    sys = ReducedSystem(h0, tw=[OMEGA])
-
-    kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
+    kernel = OpenCLKernel(ReducedSystem(h0, [
+        0, 1,
+        1, 0,
+    ]))
     kernel.t_sysparam = param.dtype
     kernel.ht_coeff = [lambda t, p: p['A'] * np.sin(p['b'] * t / np.pi)]
     kernel.compile()
 
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=[[1, 1, 1, 1]])
-    ts = kernel.run(tr, steps_chunk_size=1234).tstate()
+    tf, rhof = kernel.reader_tfinal_rho(kernel.run(tr, steps_chunk_size=1234))
+
+    # test final time
+    assert np.isclose(tf, tr[1])
 
     # reference result
     resultr = opmesolve(
@@ -487,15 +626,14 @@ def test_two_level_T_driving():
         t_bath=t_bath,
         y_0=y_0,
         tw=[OMEGA],
-        tlist=np.arange(*tr),
+        tr=tr,
         kernel="QuTip",
         args=param)
 
     # test against reference
-    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][2] - resultr.state[2]) < REF_TOL)
-
+    assert_allclose(rhof[0], resultr.state[0], **TOLS)
+    assert_allclose(rhof[1], resultr.state[1], **TOLS)
+    assert_allclose(rhof[2], resultr.state[2], **TOLS)
 
 def test_three_level_T_driving():
     """ three level system at finite temperature with
@@ -504,7 +642,7 @@ def test_three_level_T_driving():
         """
     REF_TOL = 0.0001
     OMEGA   = 2.0
-    tr      = (0, 0.1, 0.0001)
+    tr      = (0, 0.1, 0.000025)
     y_0     = 0.5
     t_bath  = 1.0
     h0      = [
@@ -526,15 +664,21 @@ def test_three_level_T_driving():
         1-0.5j, 0, 1,
         0.33j, 1, 0,
     ]
-    sys = ReducedSystem(h0, tw=[OMEGA])
 
-    kernel = OpenCLKernel(ReducedSystem(h0, tw=[OMEGA]))
+    kernel = OpenCLKernel(ReducedSystem(h0, [
+        0, 1, 0,
+        1, 0, 0,
+        0, 0, 0,
+    ]))
     kernel.t_sysparam = param.dtype
     kernel.ht_coeff = [lambda t, p: p['A'] * np.sin(p['b'] * t * np.pi)]
     kernel.compile()
 
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=[htl])
-    ts = kernel.run(tr, steps_chunk_size=431).tstate()
+    tf, rhof = kernel.reader_tfinal_rho(kernel.run(tr, steps_chunk_size=431))
+
+    # test final time
+    assert np.isclose(tf, tr[1])
 
     # reference result
     resultr = opmesolve(
@@ -543,10 +687,12 @@ def test_three_level_T_driving():
         t_bath=t_bath,
         y_0=y_0,
         tw=[OMEGA],
-        tlist=np.arange(*tr),
+        tr=tr,
         kernel="QuTip",
         args=param)
 
-    assert np.all(np.abs(ts[-1][0] - resultr.state[0]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][1] - resultr.state[1]) < REF_TOL)
-    assert np.all(np.abs(ts[-1][2] - resultr.state[2]) < REF_TOL)
+
+    assert_allclose(rhof[0], resultr.state[0], **TOLS)
+    assert_allclose(rhof[1], resultr.state[1], **TOLS)
+    assert_allclose(rhof[2], resultr.state[2], **TOLS)
+

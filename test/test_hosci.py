@@ -4,10 +4,11 @@
 """
 
 import numpy as np
-from qoptical.opme import ReducedSystem
+from qoptical.hamilton import ReducedSystem
 from qoptical.kernel_qutip import QutipKernel
 from qoptical.kernel_opencl import OpenCLKernel
-from qoptical.util import thermal_dist
+from numpy.testing import assert_allclose
+from qoptical.util import thermal_dist, time_gatter
 
 RTOL = 0.00001
 
@@ -49,6 +50,7 @@ def test_thermalization():
     state0      = np.zeros(dimH**2, dtype=np.complex64).reshape((dimH, dimH))
     state0[0,0] = 1
     Ee          = [Omega * k for k in range(dimH)]
+    tlist = time_gatter(tr[0], tr[1], tr[2])
 
     # operators
     Oa  = op_a(dimH)
@@ -72,7 +74,7 @@ def test_thermalization():
     kernel = QutipKernel(rs)
     kernel.compile()
     kernel.sync(t_bath=t_bath, y_0=y_0, state=[state0]*4)
-    tlist = np.arange(*tr)
+    tlist = time_gatter(tr[0], tr[1], tr[2])
     result = kernel.run(tlist).tstate
 
     # test whether states have thermalized
@@ -83,9 +85,11 @@ def test_thermalization():
     kernelCL = OpenCLKernel(rs)
     kernelCL.compile()
     kernelCL.sync(t_bath=t_bath, y_0=y_0, state=state0.flatten())
-    resultCL = kernelCL.run(tr).tstate()
+    tlist_cl, resultCL = kernelCL.reader_rho_t(kernelCL.run(tr))
+
 
     # test whether states have thermalized
+    assert_allclose(tlist, tlist_cl)
     EnCL = np.trace(resultCL[-1,:]@On, axis1=1, axis2=2).real
     assert np.allclose(expected_En, EnCL, rtol=RTOL), "{}".format(expected_En - EnCL)
 

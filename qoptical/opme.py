@@ -174,7 +174,7 @@ class ReducedSystem():
         )
 
 
-def opmesolve(H, rho0, t_bath, y_0, tlist, dipole=None, tw=None, e_ops=[], kernel="QuTip", args=None):
+def opmesolve(H, rho0, t_bath, y_0, tr, dipole=None, tw=None, e_ops=[], kernel="QuTip", args=None):
 
     if len(H) == 0:
         raise ValueError()
@@ -197,7 +197,7 @@ def opmesolve(H, rho0, t_bath, y_0, tlist, dipole=None, tw=None, e_ops=[], kerne
     # get kernel
     if isinstance(kernel, str):
         if kernel == "QuTip":
-            kernel = QutipKernel(system)
+            kernel = QutipKernel(system, n_htl=len(htl), n_e_ops=len(e_ops))
         elif kernel == "OpenCL":
             from .kernel_opencl import OpenCLKernel
             kernel = QutipKernel(system)
@@ -214,6 +214,7 @@ def opmesolve(H, rho0, t_bath, y_0, tlist, dipole=None, tw=None, e_ops=[], kerne
                 e_ops=e_ops if len(e_ops) else None,
                 args=args)
 
+    tlist = np.arange(tr[0], tr[1]+tr[2], tr[2])
     return kernel.run(tlist)
 
 

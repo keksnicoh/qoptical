@@ -2,12 +2,15 @@
 """ some utilities
     :author: keksnicoh
 """
-from . import settings
 import numpy as np
-from collections import namedtuple
+from . import settings
 
 
 def eigh(h0):
+    """ returns eigensystem such that the states
+        can be used to construct density operators
+        from it.
+        """
     ev, _ = np.linalg.eigh(h0)
     return ev, _.T
 
@@ -65,7 +68,7 @@ def sqmat(mat):
         ).format(mat.shape))
 
 
-def ketbra(s, i, j = None):
+def ketbra(s, i, j=None):
     """ the (``i``, ``j``) ketbra for a given
         array of states ``s``
 
@@ -122,6 +125,8 @@ def thermal_dist(E, T):
         d = np.zeros(len(E), dtype=settings.DTYPE_FLOAT)
         d[0] = 1.0
         return d
+    elif np.isinf(T):
+        return np.ones(len(E), dtype=settings.DTYPE_FLOAT)
     Z = sum(np.exp(-1.0/T * e) for e in E)
     return np.array([np.exp(-1.0/T * e) / Z for e in E], settings.DTYPE_FLOAT)
 
@@ -197,6 +202,17 @@ def nparr_manylike(a, b, dtype):
                 a.shape[0], b.shape[0]))
 
     return b
+
+
+
+def time_gatter(t0, tf, dt):
+    # XXX Test me & doc me
+    n = int(np.floor((tf - t0) / dt))
+    if np.isclose(n * dt, tf - t0):
+        return t0 + np.arange(n + 1) * dt
+    return t0 + np.arange(n + 2) * dt
+
+
 
 class InconsistentVectorSizeError(Exception):
     def __init__(self, msg, vectors):
