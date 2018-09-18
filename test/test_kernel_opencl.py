@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """ OpenCL Kernel implementation tests.
 """
-from .opme import ReducedSystem, opmesolve
-from .kernel_qutip import QutipKernel
-from .kernel_opencl import OpenCLKernel
-from .util import ketbra, eigh
+from qoptical.opme import ReducedSystem, opmesolve
+from qoptical.kernel_qutip import QutipKernel
+from qoptical.kernel_opencl import OpenCLKernel
+from qoptical.util import ketbra, eigh
 import pytest
 import numpy as np
 

@@ -5,7 +5,7 @@
 
 import numpy as np
 import pytest
-from .util import *
+from qoptical.util import *
 
 @pytest.mark.parametrize("a, square", [
     [0,   True],

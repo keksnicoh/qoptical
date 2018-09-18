@@ -1,5 +1,8 @@
 numpy
+scipy
 mako
 pybind11
 pyopencl
 pytest
+cython
+qutip

@@ -3,8 +3,8 @@
     :author: keksnicoh
 """
 
-from . import opme
-from . import settings
+from qoptical import opme
+from qoptical import settings
 import numpy as np
 import pytest
 

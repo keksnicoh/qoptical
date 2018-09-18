@@ -2,7 +2,7 @@
 """ test the f2cl module
     :author: keksnicoh
 """
-from . import f2cl
+from qoptical import f2cl
 import numpy as np
 import math
 import pyopencl as cl

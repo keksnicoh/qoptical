@@ -2,9 +2,9 @@
 """ test the QuTip reference kernel implementation.
     :author: keksnicoh
 """
-from .opme import ReducedSystem
-from .kernel_qutip import QutipKernel
-from .util import ketbra, eigh
+from qoptical.opme import ReducedSystem
+from qoptical.kernel_qutip import QutipKernel
+from qoptical.util import ketbra, eigh
 import pytest
 import numpy as np
 

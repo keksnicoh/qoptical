@@ -117,6 +117,8 @@ def opmesolve_cl_expect(tr, reduced_system, t_bath, y_0, rho0, Oexpect, OHul=[],
     ht_op    = [ht[0] for ht in OHul]
     kernel = OpenCLKernel(reduced_system, t_sysparam=t_param, ht_coeff=ht_coeff, ctx=ctx, queue=queue)
     kernel.compile()
+    print(kernel.c_kernel)
+    dd()
 
     kernel.sync(state=rho0, t_bath=t_bath, y_0=y_0, sysparam=params, htl=ht_op)
 
