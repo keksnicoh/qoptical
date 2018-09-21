@@ -49,7 +49,7 @@ import numpy as np
 import pyopencl as cl
 import pyopencl.tools
 from .f2cl import f2cl
-from .settings import DTYPE_FLOAT, DEBUG, print_debug, DTYPE_COMPLEX
+from .settings import DTYPE_FLOAT, print_debug, DTYPE_COMPLEX
 from .util import (
     vectorize, npmat_manylike, InconsistentVectorSizeError,
     boson_stat, time_gatter)
@@ -190,7 +190,8 @@ class OpenCLKernel():
         queue=None,
         t_sysparam=None,
         ht_coeff = None,
-        optimize_jumps=True):
+        optimize_jumps=True,
+        debug=False):
         """ create QutipKernel for given ``system`` """
 
         self.system         = system
@@ -198,6 +199,7 @@ class OpenCLKernel():
         self.t_sysparam     = t_sysparam
         self.ctx            = ctx or _ctx()
         self.queue          = queue or cl.CommandQueue(self.ctx)
+        self.debug = debug
 
         self.ev  = None # eigh
         self._mb = None # base transformation matrix
@@ -263,7 +265,7 @@ class OpenCLKernel():
         self.hu  = npmat_manylike(self.system.h0, [self.system.h0])
         self.ev  = self.system.ev
         self._mb = np.array(self.system.s, dtype=self.system.s.dtype)
-        if DEBUG:
+        if self.debug:
             # because everyone likes ascii cats
             print_debug("")
             print_debug('whopaa! whos there?                 ,-""""""-.    OpenCL kernel v0.0');
@@ -275,7 +277,7 @@ class OpenCLKernel():
 
 
     def __del__(self):
-        if DEBUG:
+        if self.debug:
             print_debug('release buffers')
         self.b_hu.release()
         if self.b_htl is not None:
@@ -344,7 +346,7 @@ class OpenCLKernel():
         r_arg_debug = ""
         r_debug_hook_1 = self.c_debug_hook_1 or ''
 
-        # ---- DEBUG ARGS
+        # ---- self.debug ARGS
 
         if len(self.cl_debug_buffers):
             r_arg_debug = "\n    " + ",\n    ".join(x[0] for x in self.cl_debug_buffers) + ','
@@ -363,7 +365,7 @@ class OpenCLKernel():
                 msg = 't_sysparam must be numpy.dtype: {} given'
                 raise ValueError(msg.format(type(self.t_sysparam)))
 
-            if DEBUG:
+            if self.debug:
                 msg = "gonna compile system parameters struct as {}."
                 print_debug(msg.format("t_sysparam"))
 
@@ -403,7 +405,7 @@ class OpenCLKernel():
 
         # render R(K) macro content.
 
-        if DEBUG:
+        if self.debug:
             print_debug(
                 "precomiler: generating 1 x H_un, {} x H_t, {} x jump operations.",
                 n_htl,
@@ -460,7 +462,7 @@ class OpenCLKernel():
                                     debug_hook_1 = r_debug_hook_1,
                                     tl           = r_tl)
 
-        if DEBUG:
+        if self.debug:
             print_debug(
                 "generated kernel: {} lines. Compiling...",
                 self.c_kernel.count("\n") + 1
@@ -507,7 +509,7 @@ class OpenCLKernel():
         # if y_0 and t_bath is normalized we can create the jumping
         # instructions buffer.
         if self.h_y_0 is not None and self.h_t_bath is not None:
-            if DEBUG:
+            if self.debug:
                 print_debug('compute jumping structure...')
             self.h_cl_jmp = self.create_h_cl_jmp()
             self.b_cl_jmp = self.arr_to_buf(self.h_cl_jmp, readonly=True)
@@ -596,7 +598,7 @@ class OpenCLKernel():
                       (1, self.cl_local_size)
         step_range = np.arange(0, res_len -1, steps_chunk_size)
 
-        if DEBUG:
+        if self.debug:
             print_debug("run kernel global={}, local={}".format(*work_layout))
 
         for i in step_range:
@@ -627,7 +629,7 @@ class OpenCLKernel():
             dt2 = time() - t0
 
             # print something interesting
-            if DEBUG:
+            if self.debug:
                 print_debug("{:.2f}% [{}-{}] - took GPU:{:.4f}s CPU:{:.4f}s".format(
                     i/np.max(h_int_param['INT_N']),
                     i0,
@@ -759,7 +761,7 @@ class OpenCLKernel():
             return cl_jmp
         else:
             optimized = self.cl_jmp_acc_pf(cl_jmp)
-            if DEBUG:
+            if self.debug:
                 dbg = 'optimized h_cl_jmp: old shape {} to new shape {}.'
                 print_debug(dbg.format(cl_jmp.shape, optimized.shape))
 
@@ -815,7 +817,7 @@ class OpenCLKernel():
             jmp_instr[i,j,:l] = jelem[idx(i, j)]
             jmp_n_opt = max(jmp_n_opt, len(set(jmp_instr[i,j,:l]['IDX'])))
 
-        if DEBUG:
+        if self.debug:
             msg = "prepared {} jumps. Require {} operations per work-item."
             print_debug(msg, jmp_n, jmp_n_max)
             msg = "the jumps can be optimized such that at most {} operations are required"
