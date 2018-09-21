@@ -33,7 +33,7 @@ def test_complex_dipole_complex():
     t_bath      = [0.0, 0.2, 0.5, 0.6]
     y_0         = 0.15
     Omega       = 1.4
-    tr          = (0, 16.52, 0.001)
+    tr          = (0, 16.52, 0.005)
     state0      = np.zeros(dimH**2).reshape((dimH, dimH))
     state0[0,0] = 1
 
