@@ -416,8 +416,8 @@ class OpenCLKernel():
                       "$(cfloat_sub)($(cfloat_mul)(HU(__idx, {i}), R({i}, __idy)), "
                       "$(cfloat_mul)(HU({i}, __idy), R(__idx, {i})))));");
         cx_jump = ("K = $(cfloat_add)(K, $(cfloat_mul)"
-                   "(jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].PF, "
-                   "_rky[jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].IDX]));")
+                   "(_jb[N_JUMP * __item+{i}].PF, "
+                   "_rky[_jb[N_JUMP * __item+{i}].IDX]));")
         r_define_rk = '\\\n    '.join(
             [cx_unitary.format(i=r_clint(i)) for i in range(M)]
             + [cx_jump.format(i=r_clint(i)) for i in range(self.jmp_n)])

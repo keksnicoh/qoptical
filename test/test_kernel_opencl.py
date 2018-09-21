@@ -295,6 +295,7 @@ def test_four_level_TZero():
 
     kernel = OpenCLKernel(sys)
     kernel.compile()
+    print(kernel.c_kernel)
     kernel.sync(state=states, y_0=0.15, t_bath=0)
     tf, rhof = kernel.reader_tfinal_rho(kernel.run(tr))
 

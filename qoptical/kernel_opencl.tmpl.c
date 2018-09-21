@@ -30,6 +30,7 @@ __kernel void opmesolve_rk4_eb(
     __local $(cfloat_t) _hu[IN_BLOCK_SIZE];
     __local $(cfloat_t) _h0[IN_BLOCK_SIZE];
     __local $(cfloat_t) _rky[IN_BLOCK_SIZE];
+    __local t_jump _jb[IN_BLOCK_SIZE * N_JUMP];
     __local t_int_parameters prm;
 
     // thread layout related private scope
@@ -40,6 +41,13 @@ __kernel void opmesolve_rk4_eb(
     __item      = HDIM * __idx + __idy;
     __itemT     = HDIM * __idy + __idx;
     __out_len   = get_num_groups(0) * IN_BLOCK_SIZE;
+
+    // upload the jumping structure into local buffer.
+    // note: this enhanced the performance around 20-40%
+    //       (feature/clkernel-performance-1)
+    for (int k = 0; k < N_JUMP; ++k) {
+        _jb[N_JUMP * __item + k] = jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item + k];
+    }
 
     // init local memory
     prm          = int_parameters[0];
