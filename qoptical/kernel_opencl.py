@@ -47,6 +47,7 @@ from time import time
 import itertools, os
 import numpy as np
 import pyopencl as cl
+import pyopencl.tools
 from .f2cl import f2cl
 from .settings import DTYPE_FLOAT, DEBUG, print_debug, DTYPE_COMPLEX
 from .util import (
@@ -136,13 +137,12 @@ def opmesolve_cl_expect(
     tlist  = np.arange(*tr)[::rec_skip]
     result = np.zeros((len(tlist), kernel.N), dtype=np.complex64)
     Oeb    = kernel.eb(Oexpect)
-    def reader(idx, _, rho_eb):
-        sidx = (int(np.ceil(idx[0] / rec_skip)), int(np.ceil(idx[1] / rec_skip)))
-        nrho = result[sidx[0]:sidx[1]].shape[0]
-        result[sidx[0]:sidx[1]] = np.trace(rho_eb[::rec_skip][:nrho] @ Oeb, axis1=2, axis2=3)
 
     # run
-    kernel.run(tr, steps_chunk_size=1e4, reader=reader)
+    for idx, tlist, rho_eb in kernel.run(tr, steps_chunk_size=1e4):
+        sidx = (int(np.ceil(idx[0] / rec_skip)), int(np.ceil(idx[1] / rec_skip)))
+        nrho = result[sidx[0]:sidx[1]+1].shape[0]
+        result[sidx[0]:sidx[1]+1] = np.trace(rho_eb[::rec_skip][:nrho] @ Oeb, axis1=2, axis2=3)
 
     return result
 
@@ -184,7 +184,13 @@ class OpenCLKernel():
         ('PF', DTYPE_COMPLEX),
     ])
 
-    def __init__(self, system, ctx=None, queue=None, t_sysparam=None, ht_coeff = None, optimize_jumps=True):
+    def __init__(self,
+        system,
+        ctx=None,
+        queue=None,
+        t_sysparam=None,
+        ht_coeff = None,
+        optimize_jumps=True):
         """ create QutipKernel for given ``system`` """
 
         self.system         = system
@@ -564,13 +570,12 @@ class OpenCLKernel():
         # check it against the trace of the states at all times.
         assert_rho_hermitian(self.h_state)
 
-        trange      = self.normalize_trange(trange)
+        trange = self.normalize_trange(trange)
         h_int_param = self._create_int_param(trange)
-        res_len     = max(r['INT_N'] for r in h_int_param)
-
-
+        res_len = max(r['INT_N'] for r in h_int_param)
         rho0 = self.h_state
-        h_rhot = np.zeros((steps_chunk_size + 1, *self.h_state.shape), dtype=self.h_state.dtype)
+        shape = (steps_chunk_size + 1, *self.h_state.shape)
+        h_rhot = np.zeros(shape, dtype=self.h_state.dtype)
         b_int_param = self.arr_to_buf(h_int_param, readonly=True)
 
         # create argument buffer tuple
@@ -583,7 +588,6 @@ class OpenCLKernel():
                 bufs += (self.b_sysparam, )
             bufs += (b_rhot, *[x[1] for x in self.cl_debug_buffers])
             return bufs
-
 
         # run chunkwise
         h_int_param_step = np.copy(h_int_param)
@@ -600,9 +604,9 @@ class OpenCLKernel():
             h_int_param_step['INT_T0'] = i * h_int_param_step['INT_DT']
             h_int_param_step['INT_N'] = np.minimum(steps_chunk_size, h_int_param['INT_N'] - i)
 
-            h_rhot    = np.zeros((steps_chunk_size + 1, *self.h_state.shape), dtype=self.h_state.dtype)
+            h_rhot = np.zeros((steps_chunk_size + 1, *self.h_state.shape), dtype=self.h_state.dtype)
             h_rhot[0] = rho0
-            b_rhot    = self.arr_to_buf(h_rhot)
+            b_rhot = self.arr_to_buf(h_rhot)
 
             b_int_param = self.arr_to_buf(h_int_param_step, readonly=True)
             bufs = make_buffies(b_int_param, b_rhot)
@@ -616,9 +620,6 @@ class OpenCLKernel():
             b_rhot.release()
 
             dt1, t0 = time() - t0, time()
-
-            # XXX
-            # - system dependent integration parameters
             rho0 = h_rhot[-1]
             i0, i1 = i + 1, i + h_int_param_step['INT_N'][0]
             tlist = np.arange(i0, i1 + 1) * h_int_param_step['INT_DT'][0]
@@ -767,12 +768,12 @@ class OpenCLKernel():
 
     def create_jmp_instr(self):
         """ create """
-        M     = self.system.h0.shape[0]
-        idx   = lambda i, j: M * i + j
+        M = self.system.h0.shape[0]
+        idx = lambda i, j: M * i + j
         jelem = [[] for _ in range(M ** 2)]
-
         flat_jumps = self.get_flat_jumps()
-        all_idx    = [(i, j) for i in range(M) for j in range(M)]
+        all_idx = [(i, j) for i in range(M) for j in range(M)]
+
         for ((i, j), jump) in itertools.product(all_idx, flat_jumps):
             tidx = idx(i, j)
             jx, jy = jump[np.where(jump['I'][:,0] == i)[0]], \
@@ -781,7 +782,6 @@ class OpenCLKernel():
                 fidx = idx(j1['I'][1], j2['I'][1])
                 jelem[tidx].append((fidx, j1['d'] * j2['d'].conj(), 1, j1['w'])) # A rho Ad
                 jelem[fidx].append((tidx, j1['d'].conj() * j2['d'], 0, j1['w'])) # Ad rho A
-
             # -1/2 {rho, Ad A}
             jy = jump[np.where(jump['I'][:,1] == j)[0]]
             for j2 in jy:
@@ -794,7 +794,6 @@ class OpenCLKernel():
                     fidx = idx(j2['I'][1], j)
                     jelem[tidx].append((fidx, -0.5 * j1['d'] * j2['d'].conj(), 1, j1['w']))
             # -1/2 {rho, A Ad}
-            # XXX can be merged with the block above?!
             jx = jump[np.where(jump['I'][:,0] == i)[0]]
             for j1 in jx:
                 for j2 in jump[np.where(jump['I'][:,1] == j1['I'][1])[0]]:
@@ -807,7 +806,7 @@ class OpenCLKernel():
                     jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 0, j1['w']))
 
         # structurize the data as (M, M, n_max_jump) numpy array
-        jmp_n     = len(flat_jumps)
+        jmp_n = len(flat_jumps)
         jmp_n_max = max(len(_) for _ in jelem)
         jmp_instr = np.zeros((M, M, max(1, jmp_n_max)), dtype=self.__class__.DTYPE_JUMP_RAW)
         jmp_n_opt = 0
@@ -822,7 +821,7 @@ class OpenCLKernel():
             msg = "the jumps can be optimized such that at most {} operations are required"
             print_debug(msg, jmp_n_opt)
 
-        self.jmp_n     = jmp_n_opt if self.optimize_jumps else jmp_n_max
+        self.jmp_n = jmp_n_opt if self.optimize_jumps else jmp_n_max
         self.jmp_instr = jmp_instr
 
 
