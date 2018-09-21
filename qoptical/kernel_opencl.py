@@ -579,16 +579,18 @@ class OpenCLKernel():
         shape = (steps_chunk_size + 1, *self.h_state.shape)
         h_rhot = np.zeros(shape, dtype=self.h_state.dtype)
         b_int_param = self.arr_to_buf(h_int_param, readonly=True)
+        h_rhot = np.zeros((steps_chunk_size, *self.h_state.shape), dtype=self.h_state.dtype)
+        b_rhot = self.arr_to_buf(h_rhot, writeonly=True)
 
         # create argument buffer tuple
-        def make_buffies(b_int_param, b_rhot):
+        def make_buffies(b_int_param, b_rho0):
             bufs = (self.b_hu, )
             if self.b_htl is not None:
                 bufs += (*self.b_htl, )
             bufs += (self.b_cl_jmp, b_int_param, )
             if self.b_sysparam is not None:
                 bufs += (self.b_sysparam, )
-            bufs += (b_rhot, *[x[1] for x in self.cl_debug_buffers])
+            bufs += (b_rho0, b_rhot, *[x[1] for x in self.cl_debug_buffers])
             return bufs
 
         # run chunkwise
@@ -606,26 +608,23 @@ class OpenCLKernel():
             h_int_param_step['INT_T0'] = i * h_int_param_step['INT_DT']
             h_int_param_step['INT_N'] = np.minimum(steps_chunk_size, h_int_param['INT_N'] - i)
 
-            h_rhot = np.zeros((steps_chunk_size + 1, *self.h_state.shape), dtype=self.h_state.dtype)
-            h_rhot[0] = rho0
-            b_rhot = self.arr_to_buf(h_rhot)
-
+            b_rho0 = self.arr_to_buf(rho0)
             b_int_param = self.arr_to_buf(h_int_param_step, readonly=True)
-            bufs = make_buffies(b_int_param, b_rhot)
+            bufs = make_buffies(b_int_param, b_rho0)
 
             # run kernel
             t0 = time()
             self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *bufs, np.int32(i))
             cl.enqueue_copy(self.queue, h_rhot, b_rhot)
             self.queue.finish()
+            b_rho0.release()
             b_int_param.release()
-            b_rhot.release()
 
             dt1, t0 = time() - t0, time()
             rho0 = h_rhot[-1]
             i0, i1 = i + 1, i + h_int_param_step['INT_N'][0]
             tlist = np.arange(i0, i1 + 1) * h_int_param_step['INT_DT'][0]
-            yield (i0, i1), tlist, h_rhot[1:(i1 - i0 + 2)]
+            yield (i0, i1), tlist, h_rhot[0:(i1 - i0 + 1)]
             dt2 = time() - t0
 
             # print something interesting
@@ -639,11 +638,13 @@ class OpenCLKernel():
                 ))
 
 
-    def arr_to_buf(self, arr, readonly=False):
+    def arr_to_buf(self, arr, readonly=False, writeonly=False):
         try:
             flags = mf.COPY_HOST_PTR
             if readonly:
                 flags |= mf.READ_ONLY
+            if writeonly:
+                flags |= mf.WRITE_ONLY
             return cl.Buffer(self.ctx, flags, hostbuf=arr)
         except:
             raise RuntimeError('could not allocate buffer of size {:.2f}mb'.format(arr.size/1024/1024))
