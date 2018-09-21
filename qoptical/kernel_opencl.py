@@ -49,24 +49,12 @@ import numpy as np
 import pyopencl as cl
 import pyopencl.tools
 from .f2cl import f2cl
-from .settings import DTYPE_FLOAT, print_debug, DTYPE_COMPLEX
+from .settings import QOP, print_debug
 from .util import (
     vectorize, npmat_manylike, InconsistentVectorSizeError,
     boson_stat, time_gatter)
 
 mf = cl.mem_flags
-
-DTYPE_TIME_RANGE = np.dtype([
-    ('INT_T0',  np.float32),
-    ('INT_T',  np.float32),
-    ('INT_DT', np.float32),
-])
-
-DTYPE_INTEGRATOR_PARAM = np.dtype([
-    ('INT_T0', np.float32),
-    ('INT_DT', np.float32),
-    ('INT_N',  np.int32),
-])
 
 def opmesolve_cl_expect(
     tr,
@@ -107,8 +95,8 @@ def opmesolve_cl_expect(
                             p = np.array(
                                 [(1,2)],
                                 dtype=np.dtype([
-                                    ('a', np.float32),
-                                    ('b', np.float32)
+                                    ('a', QOP.T_FLOAT),
+                                    ('b', QOP.T_FLOAT)
                                 ])
                             )
                             ```
@@ -167,10 +155,10 @@ class OpenCLKernel():
         (See `cl_jmp_acc_pf`)
         """
     DTYPE_JUMP_RAW = np.dtype([
-        ('IDX', np.int32),     # source idx
-        ('PF', DTYPE_COMPLEX), # prefactor (dipole)
-        ('SE', np.int32),      # sponanious emission (1 or 0)
-        ('W', DTYPE_FLOAT),    # transition frequency
+        ('IDX', QOP.T_INT),     # source idx
+        ('PF', QOP.T_COMPLEX), # prefactor (dipole)
+        ('SE', QOP.T_INT),      # sponanious emission (1 or 0)
+        ('W', QOP.T_FLOAT),    # transition frequency
     ])
 
     """ instruction to add a matrix element rho[IDX]
@@ -180,8 +168,8 @@ class OpenCLKernel():
         work-item's matrx element.
         """
     DTYPE_T_JMP = np.dtype([
-        ('IDX', np.int32),
-        ('PF', DTYPE_COMPLEX),
+        ('IDX', QOP.T_INT),
+        ('PF', QOP.T_COMPLEX),
     ])
 
     def __init__(self,
@@ -191,17 +179,16 @@ class OpenCLKernel():
         t_sysparam=None,
         ht_coeff = None,
         optimize_jumps=True,
-        debug=False):
+        debug=None):
         """ create QutipKernel for given ``system`` """
 
-        self.system         = system
+        self.system = system
         self.optimize_jumps = optimize_jumps
-        self.t_sysparam     = t_sysparam
-        self.ctx            = ctx or _ctx()
-        self.queue          = queue or cl.CommandQueue(self.ctx)
-        self.debug = debug
+        self.t_sysparam = t_sysparam
+        self.ctx = ctx or _ctx()
+        self.queue = queue or cl.CommandQueue(self.ctx)
+        self.debug = debug or QOP.DEBUG
 
-        self.ev  = None # eigh
         self._mb = None # base transformation matrix
 
         self.prg = None
@@ -228,7 +215,7 @@ class OpenCLKernel():
 
         # time dependent hamiltonian
         self.t_sysparam_name = None
-        self.ht_coeff        = ht_coeff
+        self.ht_coeff = ht_coeff
 
         self.jmp_n     = None # the number of jumping instructions due to dissipators
         self.jmp_instr = None # jumping instructions for all cells
@@ -263,14 +250,13 @@ class OpenCLKernel():
     def init(self):
         """ implicit initialization """
         self.hu  = npmat_manylike(self.system.h0, [self.system.h0])
-        self.ev  = self.system.ev
         self._mb = np.array(self.system.s, dtype=self.system.s.dtype)
         if self.debug:
             # because everyone likes ascii cats
             print_debug("")
             print_debug('whopaa! whos there?                 ,-""""""-.    OpenCL kernel v0.0');
             print_debug("                                 /\j__/\  (  \`--.");
-            print_debug("Compile me,                      \`@_@'/  _)  >--.`.");
+            print_debug("Compile me,                      \`\033[36m@\033[0m_\033[31m@\033[0m'/  _)  >--.`.");
             print_debug("give me data                    _{{.:Y:_}}_{{{{_,'    ) )");
             print_debug("and I'll work that out 4u!     {{_}}`-^{{_}} ```     (_/");
             print_debug("")
@@ -296,8 +282,6 @@ class OpenCLKernel():
             cannot be changed without recompile. Currently, only
             one jump layout and only one set of time dependent
             Hamiltons are supported.
-            XXX: support set of timedependent hamilton matrices
-                 per system.
 
             In this approach, the kernel is designed to be "branchless".
             This may lead to sume unnecessary assignments.
@@ -354,8 +338,7 @@ class OpenCLKernel():
         # ---- STRUCTS
 
         structs = [
-            self._compile_struct('t_int_parameters', DTYPE_INTEGRATOR_PARAM),
-            self._compile_struct('t_jump',           self.__class__.DTYPE_T_JMP),
+            self._compile_struct('t_jump', self.__class__.DTYPE_T_JMP),
         ]
 
         # ---- SYSTEM PARAMETERS DTYPE
@@ -491,11 +474,11 @@ class OpenCLKernel():
             self.state = npmat_manylike(self.system.h0, state)
 
         if y_0 is not None:
-            self.y_0 = vectorize(y_0, dtype=DTYPE_FLOAT)
+            self.y_0 = vectorize(y_0, dtype=QOP.T_FLOAT)
             assert np.all(self.y_0 >= 0)
 
         if t_bath is not None:
-            self.t_bath = vectorize(t_bath, dtype=DTYPE_FLOAT)
+            self.t_bath = vectorize(t_bath, dtype=QOP.T_FLOAT)
             assert np.all(self.t_bath >= 0)
 
         if hu is not None:
@@ -525,15 +508,15 @@ class OpenCLKernel():
                 for h_ht in self.h_htl
             ]
 
-    def run(self, trange, steps_chunk_size=1e4):
-        """ runs the evolutions within given **trange**
+    def run(self, tg, steps_chunk_size=1e4):
+        """ runs the evolutions within given time gatter **tg**
 
             Arguments:
             ----------
 
-            :trange: the time gatter (t0, tf, dt) where the final
+            :tg: the time gatter (t0, tf, dt) where the final
                 state of the calculation will be rho(tf) and the given
-                initial state is rho(t0)
+                initial state is rho(t0). (see util.time_gatter())
 
             :steps_chunk_size: how many RK4 loops are executed
                 within one OpenCL kernel invokation.
@@ -572,73 +555,79 @@ class OpenCLKernel():
         # check it against the trace of the states at all times.
         assert_rho_hermitian(self.h_state)
 
-        trange = self.normalize_trange(trange)
-        h_int_param = self._create_int_param(trange)
-        res_len = max(r['INT_N'] for r in h_int_param)
+        # integration configuration,
+        #             t0     dt     n_int : n_int * dt = tf
+        rk4_config = (tg[0], tg[2], len(time_gatter(*tg)) - 1)
+
+        # initial integration state
         rho0 = self.h_state
+
+        # result buffer (rho(t)) for one chunk
         shape = (steps_chunk_size + 1, *self.h_state.shape)
-        h_rhot = np.zeros(shape, dtype=self.h_state.dtype)
-        b_int_param = self.arr_to_buf(h_int_param, readonly=True)
         h_rhot = np.zeros((steps_chunk_size, *self.h_state.shape), dtype=self.h_state.dtype)
         b_rhot = self.arr_to_buf(h_rhot, writeonly=True)
 
-        # create argument buffer tuple
-        def make_buffies(b_int_param, b_rho0):
+        def make_buffies(b_rho0):
+            """ returns tuple of OpenCL buffers which are passed
+                into the OpenCL kernel.
+                """
+
             bufs = (self.b_hu, )
             if self.b_htl is not None:
                 bufs += (*self.b_htl, )
-            bufs += (self.b_cl_jmp, b_int_param, )
+
+            bufs += (self.b_cl_jmp, )
             if self.b_sysparam is not None:
                 bufs += (self.b_sysparam, )
+
             bufs += (b_rho0, b_rhot, *[x[1] for x in self.cl_debug_buffers])
+
             return bufs
 
-        # run chunkwise
-        h_int_param_step = np.copy(h_int_param)
-        h_int_param_step['INT_N'] = 0
-        work_layout = (self.h_state.shape[0], self.cl_local_size), \
-                      (1, self.cl_local_size)
-        step_range = np.arange(0, res_len -1, steps_chunk_size)
+        # each of the N states is evolved inside a work-group.
+        work_layout = (self.N, self.cl_local_size), (1, self.cl_local_size)
+        arg_dt = QOP.T_FLOAT(rk4_config[1])
+        for i in np.arange(0, rk4_config[2] - 1, steps_chunk_size):
+            arg_t0 = QOP.T_FLOAT(rk4_config[0] + i * rk4_config[1])
+            arg_n_int = QOP.T_INT(np.minimum(steps_chunk_size, rk4_config[2] - i))
 
-        if self.debug:
-            print_debug("run kernel global={}, local={}".format(*work_layout))
+            # the idx represent the index of the full non-chunkwise evolution
+            idx = i + 1, i + arg_n_int
 
-        for i in step_range:
-            # update integration parameters to current chunk.
-            h_int_param_step['INT_T0'] = i * h_int_param_step['INT_DT']
-            h_int_param_step['INT_N'] = np.minimum(steps_chunk_size, h_int_param['INT_N'] - i)
+            # the current time gatter
+            tlist = rk4_config[0] + np.arange(idx[0], idx[1] + 1) * arg_dt
 
+            # upload new t0 state and create buffer tuple
             b_rho0 = self.arr_to_buf(rho0)
-            b_int_param = self.arr_to_buf(h_int_param_step, readonly=True)
-            bufs = make_buffies(b_int_param, b_rho0)
+            bufs = make_buffies(b_rho0)
 
             # run kernel
             t0 = time()
-            self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *bufs, np.int32(i))
+            self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *bufs, arg_t0, arg_dt, arg_n_int)
             cl.enqueue_copy(self.queue, h_rhot, b_rhot)
             self.queue.finish()
             b_rho0.release()
-            b_int_param.release()
-
             dt1, t0 = time() - t0, time()
+
+            # get the last state ... it will be the first on the next chunk ...
             rho0 = h_rhot[-1]
-            i0, i1 = i + 1, i + h_int_param_step['INT_N'][0]
-            tlist = np.arange(i0, i1 + 1) * h_int_param_step['INT_DT'][0]
-            yield (i0, i1), tlist, h_rhot[0:(i1 - i0 + 1)]
+
+            # yield chunk result
+            yield (idx[0], idx[1]), tlist, h_rhot[0:(idx[1] - idx[0] + 1)]
             dt2 = time() - t0
 
             # print something interesting
             if self.debug:
-                print_debug("{:.2f}% [{}-{}] - took GPU:{:.4f}s CPU:{:.4f}s".format(
-                    i/np.max(h_int_param['INT_N']),
-                    i0,
-                    i1,
-                    dt1,
-                    dt2,
-                ))
+                progress = str(int(np.round(100 * (i + arg_n_int) / rk4_config[2])))
+                dbg_args = (progress, idx[0], idx[1], *work_layout, dt1, dt2, )
+                dmsg = "\033[36m{:>3s}\033[0m % [{}-{}] global={}, local={} "\
+                     + "- took GPU \033[34m{:.4f}s\033[0m CPU \033[34m{:.4f}s\033[0m"
+                print_debug(dmsg.format(*dbg_args))
 
 
     def arr_to_buf(self, arr, readonly=False, writeonly=False):
+        """ helper to create a new buffer from np array.
+            """
         try:
             flags = mf.COPY_HOST_PTR
             if readonly:
@@ -670,16 +659,6 @@ class OpenCLKernel():
         else:
             return dict(vectors)
 
-
-    def get_flat_jumps(self):
-        fj = []
-        for nw, jumps in enumerate(self.system.get_jumps()):
-            if jumps is None:
-                continue
-            jumps = jumps.reshape((int(len(jumps) / (nw + 1)), nw + 1))
-            for jump in jumps:
-                fj.append(jump)
-        return fj
 
 
     def reader_tfinal_rho(self, g):
@@ -743,6 +722,17 @@ class OpenCLKernel():
             self.h_t_bath = vnorm['t_bath']
 
         self.N, self.dimH = self.h_state.shape[0:2]
+
+
+    def get_flat_jumps(self):
+        fj = []
+        for nw, jumps in enumerate(self.system.get_jumps()):
+            if jumps is None:
+                continue
+            jumps = jumps.reshape((int(len(jumps) / (nw + 1)), nw + 1))
+            for jump in jumps:
+                fj.append(jump)
+        return fj
 
 
     def create_h_cl_jmp(self):
@@ -895,32 +885,6 @@ class OpenCLKernel():
             dtype
         )
         return c_decl
-
-
-    def normalize_trange(self, trange):
-        if isinstance(trange, tuple):
-            return self.normalize_trange([trange])
-        if not isinstance(trange, np.ndarray):
-            if not isinstance(trange, list):
-                raise ValueError()
-            return self.normalize_trange(
-                np.array(trange, dtype=DTYPE_TIME_RANGE)
-            )
-        if not trange.dtype == DTYPE_TIME_RANGE:
-            raise ValueError()
-        if len(trange) == 1 and len(self.h_state) != 1:
-            return np.array([trange[0]] * len(self.h_state), dtype=DTYPE_TIME_RANGE)
-        if len(trange) != len(self.h_state):
-            raise ValueError()
-        return trange
-
-
-    def _create_int_param(self, trange):
-        """ create integrator parameters from normalized `trange` """
-        return np.array([
-            (tr['INT_T0'], tr['INT_DT'], len(time_gatter(*tr)) - 1)
-            for tr in trange
-        ], dtype=DTYPE_INTEGRATOR_PARAM)
 
 
 def r_clfloat(f, prec=None):

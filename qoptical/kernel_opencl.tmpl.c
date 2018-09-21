@@ -17,11 +17,12 @@
 
 __kernel void opmesolve_rk4_eb(
     __global const $(cfloat_t) *hu,/*{arg_htl}*/
-    __global const t_jump *jb,
-    __global const t_int_parameters *int_parameters,/*{arg_sysparam}*/
+    __global const t_jump *jb,/*{arg_sysparam}*/
     __global const $(cfloat_t) *rho0,
     __global __write_only $(cfloat_t) *result,/*{arg_debug}*/
-    const int n0
+    const $(float) t0,
+    const $(float) dt,
+    const int n_int
 ) {
     $(float) t;
     int n;
@@ -32,7 +33,6 @@ __kernel void opmesolve_rk4_eb(
     __local $(cfloat_t) _h0[IN_BLOCK_SIZE];
     __local $(cfloat_t) _rky[IN_BLOCK_SIZE];
     __local t_jump _jb[IN_BLOCK_SIZE * N_JUMP];
-    __local t_int_parameters prm;
 
     // thread layout related private scope
     int __in_offset, __item, __itemT, __out_len, __idx, __idy;
@@ -44,29 +44,26 @@ __kernel void opmesolve_rk4_eb(
     __out_len   = get_num_groups(0) * IN_BLOCK_SIZE;
 
     // upload the jumping structure into local buffer.
-    // note: this enhanced the performance around 20-40%
+    // note: this enhanced the performance around 20-50%
     //       (feature/clkernel-performance-1)
     for (int k = 0; k < N_JUMP; ++k) {
         _jb[N_JUMP * __item + k] = jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item + k];
     }
 
     // init local memory
-    prm          = int_parameters[0];
-    //_rho         = result[__out_len * (n0 - 1) + __in_offset + __item]; // t=0
     _rho         = rho0[__in_offset + __item]; // t=0
     _h0[__item]  = hu[__in_offset + __item];
     _h0[__itemT] = hu[__in_offset + __itemT];
     /*{htl_priv}*/
 
-    HTL(prm.INT_T0)
+    HTL(t0)
     barrier(CLK_LOCAL_MEM_FENCE);
 
     // loop init
-    //t  = prm.INT_T0 + n0 * prm.INT_DT;
-    t  = prm.INT_T0;
-    n  = 0;
-    //n  = n0;
-    while (n < prm.INT_N) {
+    //t  = t0 + n0 * dt;
+    t = t0;
+    n = 0;
+    while (n < n_int) {
         /*{debug_hook_0}*/
         // k1
         k1 = $(cfloat_fromreal)(0.0f);
@@ -79,10 +76,10 @@ __kernel void opmesolve_rk4_eb(
         // k2
         barrier(CLK_LOCAL_MEM_FENCE);
         k2 = $(cfloat_fromreal)(0.0f);
-        _rky[__item].real = _rho.real + a21 * prm.INT_DT * k1.real;
-        _rky[__item].imag = _rho.imag + a21 * prm.INT_DT * k1.imag;
+        _rky[__item].real = _rho.real + a21 * dt * k1.real;
+        _rky[__item].imag = _rho.imag + a21 * dt * k1.imag;
         _rky[__itemT] = $(cfloat_conj)(_rky[__item]);
-        HTL(t + prm.INT_DT / 2.0f)
+        HTL(t + dt / 2.0f)
         _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
         barrier(CLK_LOCAL_MEM_FENCE);
         RK(k2)
@@ -90,20 +87,20 @@ __kernel void opmesolve_rk4_eb(
         // k3
         barrier(CLK_LOCAL_MEM_FENCE);
         k3 = $(cfloat_fromreal)(0.0f);
-        _rky[__item].real = _rho.real + a31 * prm.INT_DT * k1.real + a32 * prm.INT_DT * k2.real;
-        _rky[__item].imag = _rho.imag + a31 * prm.INT_DT * k1.imag + a32 * prm.INT_DT * k2.imag;
+        _rky[__item].real = _rho.real + a31 * dt * k1.real + a32 * dt * k2.real;
+        _rky[__item].imag = _rho.imag + a31 * dt * k1.imag + a32 * dt * k2.imag;
         _rky[__itemT] = $(cfloat_conj)(_rky[__item]);
-        HTL(t + prm.INT_DT)
+        HTL(t + dt)
         _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
         barrier(CLK_LOCAL_MEM_FENCE);
         RK(k3)
 
-        _rho.real += prm.INT_DT * (b1 * k1.real + b2 * k2.real + b3 * k3.real);
-        _rho.imag += prm.INT_DT * (b1 * k1.imag + b2 * k2.imag + b3 * k3.imag);
+        _rho.real += dt * (b1 * k1.real + b2 * k2.real + b3 * k3.real);
+        _rho.imag += dt * (b1 * k1.imag + b2 * k2.imag + b3 * k3.imag);
         result[__out_len * n + __in_offset + __item] = _rho;
         result[__out_len * n + __in_offset + __itemT] = $(cfloat_conj)(_rho);
         /*{debug_hook_1}*/
         barrier(CLK_LOCAL_MEM_FENCE);
-        t = prm.INT_T0 + (++n) * prm.INT_DT;
+        t = t0 + (++n) * dt;
     }
 }

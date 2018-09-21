@@ -5,7 +5,7 @@
 """
 from qutip import Qobj, mesolve, expect
 import numpy as np
-from .settings import *
+from .settings import QOP, print_debug
 from .util import *
 from .result import OpMeResult
 from time import time
@@ -14,7 +14,7 @@ class QutipKernel():
     """ Performs sequential integration of multiple states
         using QuTip: http://qutip.org/docs/4.1/modules/qutip/mesolve.html
     """
-    def __init__(self, system, n_htl=0, n_e_ops=0):
+    def __init__(self, system, n_htl=0, n_e_ops=0, debug=None):
         """ create QutipKernel for given ``system`` """
         # api state
         self.system    = system
@@ -40,10 +40,13 @@ class QutipKernel():
         # flags
         self.synced    = False
         self.compiled  = False
+
+        self.debug = debug or QOP.DEBUG
+
         self.init()
 
     def init(self):
-        if DEBUG:
+        if self.debug:
             print_debug("")
             print_debug("                           //")
             print_debug("   boaaa!!1              _oo\ ")
@@ -93,10 +96,10 @@ class QutipKernel():
         if hu is not None:
             self.hu = npmat_manylike(self.system.h0, hu)
         if t_bath is not None:
-            self.t_bath = vectorize(t_bath, dtype=DTYPE_FLOAT)
+            self.t_bath = vectorize(t_bath, dtype=QOP.T_FLOAT)
             assert np.all(self.t_bath >= 0)
         if y_0 is not None:
-            self.y_0 = vectorize(y_0, dtype=DTYPE_FLOAT)
+            self.y_0 = vectorize(y_0, dtype=QOP.T_FLOAT)
             assert np.all(self.y_0 >= 0)
         if args is not None:
             self.args = args
@@ -124,7 +127,7 @@ class QutipKernel():
             q_state = [Qobj(s) for s in self.state],
             q_hu    = [Qobj(hu) for hu in self.hu],
             n_dst   = [boson_stat(t) for t in tb],
-            r_y_0   = self.y_0 if self.y_0 is not None else np.array([0.0], dtype=DTYPE_FLOAT))
+            r_y_0   = self.y_0 if self.y_0 is not None else np.array([0.0], dtype=QOP.T_FLOAT))
 
         self.synced = True
 
@@ -200,11 +203,11 @@ class QutipKernel():
         tstate = None
         if self.q_e_ops is None:
             shape = (self.state.shape[0], len(tlist), *self.state.shape[1:])
-            tstate = np.empty(shape, dtype=settings.DTYPE_COMPLEX)
+            tstate = np.empty(shape, dtype=settings.QOP.T_COMPLEX)
         texpect = None
         if self.q_e_ops is not None:
             shape = (self.state.shape[0], len(self.q_e_ops), len(tlist))
-            texpect = np.empty(shape, dtype=settings.DTYPE_COMPLEX)
+            texpect = np.empty(shape, dtype=settings.QOP.T_COMPLEX)
 
         # integrate states
         t0          = time()
@@ -244,7 +247,7 @@ class QutipKernel():
         tf = time()
         if tstate is not None:
             tstate = np.swapaxes(tstate, axis1=0, axis2=1)
-            DEBUG and print_debug("1/1 calculated {} steps, took {:.4f}s".format(tstate.shape[0:2], tf - t0))
+            self.debug and print_debug("1/1 calculated {} steps, took {:.4f}s".format(tstate.shape[0:2], tf - t0))
 
         fstate = None
         if tstate is not None:
