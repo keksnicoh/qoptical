@@ -46,7 +46,7 @@ def test_thermalization():
     t_bath      = [0.0, 0.2, 1.0, 1.5]
     y_0         = 1.25
     Omega       = 1.0
-    tr          = (0, 4.00, 0.001)
+    tr          = (0, 4.00, 0.005)
     state0      = np.zeros(dimH**2, dtype=np.complex64).reshape((dimH, dimH))
     state0[0,0] = 1
     Ee          = [Omega * k for k in range(dimH)]
