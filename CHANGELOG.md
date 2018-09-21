@@ -1,6 +1,8 @@
 # CHANGELOG
 
 ## 0.0
+- **2018-09-21**:
+    - fixed bug in rk4 butcher schema of opencl kernel.
 - **2018-09-18**: (Refactoring & BugFixes)
     - Fixed time-gatter bugs in OpenCL kernel, added/improved test
     - moved test_*.py to test/*.py
