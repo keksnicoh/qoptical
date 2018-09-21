@@ -2,7 +2,9 @@
 
 ## 0.0
 - **2018-09-21**:
-    - fixed bug in rk4 butcher schema of opencl kernel.
+    - fixed bug in rk4 butcher schema of OpenCLKernel.
+    - optimized OpenCLKernel by using local memory for jumping buffers.
+    - Added `settings.QOP`.
 - **2018-09-18**: (Refactoring & BugFixes)
     - Fixed time-gatter bugs in OpenCL kernel, added/improved test
     - moved test_*.py to test/*.py
