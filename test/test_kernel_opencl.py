@@ -591,7 +591,7 @@ def test_two_level_T_driving():
         """
     REF_TOL = 0.0001
     OMEGA   = 2.0
-    tr      = (0, 1.0, 0.0001)
+    tr      = (0, 1.0, 0.001)
     y_0     = 0.5
     t_bath  = 1.0
     h0      = [0, 0, 0, OMEGA]
@@ -642,7 +642,7 @@ def test_three_level_T_driving():
         """
     REF_TOL = 0.0001
     OMEGA   = 2.0
-    tr      = (0, 0.1, 0.000025)
+    tr      = (0, 1.0, 0.01)
     y_0     = 0.5
     t_bath  = 1.0
     h0      = [

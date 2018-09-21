@@ -49,6 +49,9 @@ __kernel void opmesolve_rk4_eb(
     _h0[__itemT] = hu[__in_offset + __itemT];
     /*{htl_priv}*/
 
+    HTL(prm.INT_T0)
+    barrier(CLK_LOCAL_MEM_FENCE);
+
     // loop init
     //t  = prm.INT_T0 + n0 * prm.INT_DT;
     t  = prm.INT_T0;
@@ -60,7 +63,6 @@ __kernel void opmesolve_rk4_eb(
         k1 = $(cfloat_fromreal)(0.0f);
         _rky[__item] = _rho;
         _rky[__itemT] = $(cfloat_conj)(_rho);
-        HTL(t)
         _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
         barrier(CLK_LOCAL_MEM_FENCE);
         RK(k1)
@@ -71,7 +73,7 @@ __kernel void opmesolve_rk4_eb(
         _rky[__item].real = _rho.real + a21 * prm.INT_DT * k1.real;
         _rky[__item].imag = _rho.imag + a21 * prm.INT_DT * k1.imag;
         _rky[__itemT] = $(cfloat_conj)(_rky[__item]);
-        HTL(t)
+        HTL(t + prm.INT_DT / 2.0f)
         _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
         barrier(CLK_LOCAL_MEM_FENCE);
         RK(k2)
@@ -82,7 +84,7 @@ __kernel void opmesolve_rk4_eb(
         _rky[__item].real = _rho.real + a31 * prm.INT_DT * k1.real + a32 * prm.INT_DT * k2.real;
         _rky[__item].imag = _rho.imag + a31 * prm.INT_DT * k1.imag + a32 * prm.INT_DT * k2.imag;
         _rky[__itemT] = $(cfloat_conj)(_rky[__item]);
-        HTL(t)
+        HTL(t + prm.INT_DT)
         _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
         barrier(CLK_LOCAL_MEM_FENCE);
         RK(k3)
