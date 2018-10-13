@@ -44,6 +44,7 @@
     :author: keksnicoh
 """
 import os
+import sys
 from time import time
 import itertools
 import numpy as np
@@ -57,7 +58,7 @@ from .util import (
 
 mf = cl.mem_flags
 
-def opmesolve_cl_expect(tr,
+def opmesolve_cl_expect(tg,
                         reduced_system,
                         t_bath,
                         y_0,
@@ -73,7 +74,7 @@ def opmesolve_cl_expect(tr,
         Parameters:
         -----------
 
-        :tr:             time range defining the time gatter `(t0, tf, dt)`
+        :tg:             time gatter `(t0, tf, dt)`
 
         :reduced_system: Instance of the reduced system which configures the
                          jumping and coupling to the bath
@@ -127,12 +128,12 @@ def opmesolve_cl_expect(tr,
     kernel.sync(state=rho0, t_bath=t_bath, y_0=y_0, sysparam=params, htl=ht_op)
 
     # result reader / expectation value
-    tlist = np.arange(*tr)[::rec_skip]
+    tlist = np.arange(*tg)[::rec_skip]
     result = np.zeros((len(tlist), kernel.N), dtype=np.complex64)
-    Oeb = kernel.system.eb(Oexpect)
+    Oeb = kernel.system.op2eb(Oexpect)
 
     # run
-    for idx, tlist, rho_eb in kernel.run(tr, steps_chunk_size=1e4):
+    for idx, tlist, rho_eb in kernel.run(tg, steps_chunk_size=1e4):
         sidx = (int(np.ceil(idx[0] / rec_skip)), int(np.ceil(idx[1] / rec_skip)))
         nrho = result[sidx[0]:sidx[1]+1].shape[0]
         result[sidx[0]:sidx[1]+1] = np.trace(rho_eb[::rec_skip][:nrho] @ Oeb, axis1=2, axis2=3)
@@ -575,6 +576,7 @@ class OpenCLKernel():
         if self.b_sysparam is not None:
             bufs += (self.b_sysparam, )
         bufs += (b_rhot, )
+
         arg_dt = QOP.T_FLOAT(rk4_config[1])
 
         for i in np.arange(0, rk4_config[2] - 1, steps_chunk_size):
@@ -588,6 +590,7 @@ class OpenCLKernel():
             tlist = rk4_config[0] + np.arange(idx[0], idx[1] + 1) * arg_dt
 
             # upload new t0 state and create buffer tuple
+            # h_rhot[-1] / np.trace(h_rhot[-1], axis1=1, axis2=2).reshape((h_rhot[-1].shape[0], 1, 1))
             b_rho0 = self.arr_to_buf(h_rhot[-1], readonly=True)
 
             # external buffers (for custom injected code via debug hooks for example).
@@ -601,7 +604,7 @@ class OpenCLKernel():
             b_rho0.release()
             dt1, t0 = time() - t0, time()
 
-            # get the last state ... it will be the first on the next chunk ...
+            # get state into ram
             cl.enqueue_copy(self.queue, h_rhot, b_rhot)
             self.queue.finish()
 
@@ -613,8 +616,8 @@ class OpenCLKernel():
             if self.debug:
                 progress = str(int(np.round(100 * (i + arg_n_int) / rk4_config[2])))
                 dbg_args = (progress, idx[0], idx[1], *work_layout, dt1, dt2, )
-                dmsg = "\033[36m{:>3s}\033[0m % [{}-{}] global={}, local={} "\
-                     + "- took GPU \033[34m{:.4f}s\033[0m CPU \033[34m{:.4f}s\033[0m"
+                dmsg = "\033[s\033[36m{:>3s}\033[0m % [{}-{}] global={}, local={} "\
+                     + "- took GPU \033[34m{:.4f}s\033[0m CPU \033[34m{:.4f}s\033[0m\033[1A\033[u"
                 print_debug(dmsg.format(*dbg_args))
 
 

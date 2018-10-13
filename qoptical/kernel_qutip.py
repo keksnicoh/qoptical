@@ -214,7 +214,8 @@ class QutipKernel():
         q_state_new = []
         zipped      = zip(self.q_hu, self.q_state, self.r_y_0, self.n_dst)
         for (i, (q_hu, q_s, y_0, n_dst)) in enumerate(zipped):
-
+            if QOP.DEBUG:
+                print_debug('{}/{}'.format(i, len(self.q_hu)))
             # prepare lindblad operators
             C = lambda w: w**3 * (1 + n_dst(w)) if w >= 0 \
                     else -w**3 * n_dst(-w)

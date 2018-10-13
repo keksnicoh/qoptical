@@ -59,6 +59,11 @@ __kernel void opmesolve_rk4_eb(
     HTL(t0)
     barrier(CLK_LOCAL_MEM_FENCE);
 
+    bool non_diag = true;
+    if (__idx == __idy) {
+        non_diag = false;
+    }
+
     // loop init
     //t  = t0 + n0 * dt;
     t = t0;
@@ -68,39 +73,42 @@ __kernel void opmesolve_rk4_eb(
         // k1
         k1 = $(cfloat_fromreal)(0.0f);
         _rky[__item] = _rho;
-        _rky[__itemT] = $(cfloat_conj)(_rho);
-        _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
+        if (non_diag) _rky[__itemT] = $(cfloat_conj)(_rho);
+        if (non_diag) _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
+
         barrier(CLK_LOCAL_MEM_FENCE);
         RK(k1)
+        barrier(CLK_LOCAL_MEM_FENCE);
 
         // k2
-        barrier(CLK_LOCAL_MEM_FENCE);
         k2 = $(cfloat_fromreal)(0.0f);
         _rky[__item].real = _rho.real + a21 * dt * k1.real;
         _rky[__item].imag = _rho.imag + a21 * dt * k1.imag;
-        _rky[__itemT] = $(cfloat_conj)(_rky[__item]);
+        if (non_diag) _rky[__itemT] = $(cfloat_conj)(_rky[__item]);
         HTL(t + dt / 2.0f)
-        _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
+        if (non_diag) _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
+
         barrier(CLK_LOCAL_MEM_FENCE);
         RK(k2)
+        barrier(CLK_LOCAL_MEM_FENCE);
 
         // k3
-        barrier(CLK_LOCAL_MEM_FENCE);
         k3 = $(cfloat_fromreal)(0.0f);
         _rky[__item].real = _rho.real + a31 * dt * k1.real + a32 * dt * k2.real;
         _rky[__item].imag = _rho.imag + a31 * dt * k1.imag + a32 * dt * k2.imag;
-        _rky[__itemT] = $(cfloat_conj)(_rky[__item]);
+        if (non_diag) _rky[__itemT] = $(cfloat_conj)(_rky[__item]);
         HTL(t + dt)
-        _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
+        if (non_diag) _hu[__itemT] = $(cfloat_conj)(_hu[__item]);
+
         barrier(CLK_LOCAL_MEM_FENCE);
         RK(k3)
+        barrier(CLK_LOCAL_MEM_FENCE);
 
         _rho.real += dt * (b1 * k1.real + b2 * k2.real + b3 * k3.real);
         _rho.imag += dt * (b1 * k1.imag + b2 * k2.imag + b3 * k3.imag);
         result[__out_len * n + __in_offset + __item] = _rho;
-        result[__out_len * n + __in_offset + __itemT] = $(cfloat_conj)(_rho);
+        if (non_diag) result[__out_len * n + __in_offset + __itemT] = $(cfloat_conj)(_rho);
         /*{debug_hook_1}*/
-        barrier(CLK_LOCAL_MEM_FENCE);
         t = t0 + (++n) * dt;
     }
 }

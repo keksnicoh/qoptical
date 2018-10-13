@@ -67,7 +67,7 @@ def run(config):
         for i in range(config['n_measure']):
             tlist_cl, resultCL = kernel.reader_tfinal_rho(kernel.run(tr, steps_chunk_size=n_steps))
             benched.append(state[-1])
-            print('{} {} {:.4f}s'.format(len(trho), i, state[-1]))
+       #     print('{} {} {:.4f}s'.format(len(trho), i, state[-1]))
 
         print('---------------------')
         print('{:.6f}s'.format(np.mean(benched)))

@@ -3,6 +3,7 @@ from .opme import opmesolve
 from .hamilton import ReducedSystem
 from .kernel_opencl import opmesolve_cl_expect
 from .fstools import persist_fs, load_fs
+from .settings import QOP as QO
 
 __all__ = [
     # general
