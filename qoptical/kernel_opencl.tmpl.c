@@ -29,10 +29,11 @@ __kernel void opmesolve_rk4_eb(
     /*{tl}*/
     $(cfloat_t) ihbar = $(cfloat_new)(0.0f, -1.0f / NATURE_HBAR);
     $(cfloat_t) k1, k2, k3, _rho;
+    $(cfloat_t) _h0;
     __local $(cfloat_t) _hu[IN_BLOCK_SIZE];
-    __local $(cfloat_t) _h0[IN_BLOCK_SIZE];
     __local $(cfloat_t) _rky[IN_BLOCK_SIZE];
-    __local t_jump _jb[IN_BLOCK_SIZE * N_JUMP];
+    __local t_jump _jb[LOCAL_SIZE * N_JUMP];
+    //__private t_jump _jb[N_JUMP];
 
     // thread layout related private scope
     int __in_offset, __item, __itemT, __out_len, __idx, __idy;
@@ -48,12 +49,13 @@ __kernel void opmesolve_rk4_eb(
     //       (feature/clkernel-performance-1)
     for (int k = 0; k < N_JUMP; ++k) {
         _jb[N_JUMP * __item + k] = jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item + k];
+        //_jb[k] = jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item + k];
     }
 
     // init local memory
     _rho         = rho0[__in_offset + __item]; // t=0
-    _h0[__item]  = hu[__in_offset + __item];
-    _h0[__itemT] = hu[__in_offset + __itemT];
+    _h0  = hu[__in_offset + __item];
+   // _h0[__itemT] = hu[__in_offset + __itemT];
     /*{htl_priv}*/
 
     HTL(t0)

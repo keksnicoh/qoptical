@@ -131,11 +131,27 @@ class ReducedSystem():
 
 
     def thermal_state(self, T):
-        """ creates a thermal state at
-            temperature ``T``. If T defines many
-            temperatures then a list of thermal
-            states is returned.
-        """
+        """ thermal state at temperature ``T``.
+
+            Arguments:
+            ----------
+
+            :T: floating point temperature or an array of temperatures.
+
+            Example:
+            --------
+
+            ```python
+
+            rho_at_t44 = rs.thermal_state(4.4)
+            rho = rs.thermal_state([0, 1, 2, 3])
+
+            ```
+            """
+        #can = lambda t: enumerate(thermal_dist(self.ev, t))
+        #rho = lambda t: sum(p * ketbra(self.s, i) for (i, p) in can(t))
+        #vpack(T, rho(t) for t in vunpack(T))
+
         return unvectorize([
             sum(
                 p * ketbra(self.s, i)
@@ -150,6 +166,9 @@ class ReducedSystem():
             many states then a list of pure
             energy states is returned.
         """
+
+        #vpack(i, ketbra(self.s, j, j) for j in vunpack(i))
+
         return unvectorize(
             ketbra(self.s, i, i)
             for i in vectorize(i)
