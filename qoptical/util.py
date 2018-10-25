@@ -66,7 +66,7 @@ def sqmat(a, dtype=None):
             err = 'cannot be interpreted as a numpy matrix: {}'
             raise ValueError(err.format(e))
 
-    if not isinstance(a, (np.ndarray, np.matrix, tuple)):
+    if not isinstance(a, (np.ndarray, tuple)):
         err = "value of type {} not accepted."
         raise ValueError(err.format(type(err)))
 
