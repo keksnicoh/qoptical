@@ -358,7 +358,7 @@ class OpenCLKernel():
 
         # ---- DYNAMIC HAMILTON
         n_htl = 0
-        r_htl = '#define HTL(T)\\\n   _hu[__item] = _h0;'
+        r_htl = '#define HTL(T)\\\n   _hu[__item] = _h0[__item];'
         if self.ht_coeff is not None:
             n_htl = len(self.ht_coeff)
             # compile coefficient function to OpenCL
