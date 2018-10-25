@@ -1,8 +1,9 @@
-numpy
-scipy
+cython
 mako
 pybind11
-pyopencl
+numpy
+scipy
 pytest
-cython
+pytools
+pyopencl
 qutip

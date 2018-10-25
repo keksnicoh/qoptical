@@ -3,12 +3,21 @@ from setuptools import setup, find_packages
 setup(
     name="qoptical",
     packages=find_packages(),
-    setup_requires=[
-        'setuptools>=18.0',
-        'cython',
+    install_requires=[
+        "cython",
+        "mako",
         "pybind11",
-        "mako"
+        "numpy",
+        "scipy",
+        "pytest",
+        "pytools",
+        "pyopencl",
+        "qutip",
     ],
-    install_requires=["numpy", "scipy", "pytest", "qutip"],
-    #install_requires=["numpy", "scipy", "mako", "pybind11", "pyopencl", "pytest", "cython", "qutip"],
+    package_data={
+        "": [
+            "qoptical/kernel_opencl.tmpl.c",
+        ]
+    },
+    include_package_data=True,
 )
