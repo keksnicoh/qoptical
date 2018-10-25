@@ -4,7 +4,7 @@
     :author: keksnicoh
 """
 import numpy as np
-from .util import vectorize, unvectorize, ketbra, thermal_dist, sqmat, eigh
+from .util import vectorize, unvectorize, ketbra, thermal_dist, sqmat, eigh, is_H
 from . import settings
 
 DTYPE_JUMP = np.dtype([
@@ -47,10 +47,15 @@ class ReducedSystem():
         dipole = None if dipole is None else sqmat(dipole)
 
         # validate
-        assert np.all(h0.H == h0), 'h0 must be hermitian'
+        if not is_H(h0):
+            raise ValueError('arg h0 must be hermitian.')
+
         if dipole is not None:
-            assert np.all(dipole.H == dipole), 'dipole transition moment must be hermitian'
-            assert np.all(dipole.shape == h0.shape), 'dipole transition moment must match h0'
+            if not is_H(dipole):
+                raise ValueError('dipole transition moment must be hermitian')
+
+            if not np.all(dipole.shape == h0.shape):
+                raise ValueError('dipole transition moment must match h0')
 
         self.h0 = h0
         self.dipole = dipole
@@ -96,7 +101,8 @@ class ReducedSystem():
         if self.dipole is None:
             return 1 if i != j else 0
 
-        return (self.s[j] @ self.dipole @ self.s[i].T.conj())[0, 0]
+        # <s_i|D|s_j>
+        return (self.s[j:j+1] @ self.dipole @ self.s[i:i+1].T.conj())[0, 0]
 
 
     def dipole_eb(self):

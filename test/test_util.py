@@ -32,16 +32,19 @@ def test_is_sqmat(a, square):
 
 @pytest.mark.parametrize("a, b", [
     [1, None],
-    [[1,2,3,4], np.matrix([1,2,3,4]).reshape((2,2))],
-    [[[1,2],[3,4]], np.matrix([1,2,3,4]).reshape((2,2))],
-    [np.array([1,2,3,4]), np.matrix([1,2,3,4]).reshape((2,2))],
-    [np.matrix([1,2,3,4]), np.matrix([1,2,3,4]).reshape((2,2))],
-    [np.matrix([1,2,3,4]).reshape((1,4)), np.matrix([1,2,3,4]).reshape((2,2))],
-    [np.matrix([1,2,3,4]).reshape((1,4)), np.matrix([1,2,3,4]).reshape((2,2))],
-    [np.array([1,2,3,4]).reshape((1,2,2)), np.matrix([1,2,3,4]).reshape((2,2))],
-    [np.matrix([1,2,3,4,1,2,3,4]).reshape((2,4)), None],
-    [np.matrix([1,2,3,4,5,6]).reshape((2,3)), None],
-    [np.matrix([1,2,3,4,5,6]).reshape((2,1,1,3)), None],
+    ["york", None],
+    [np.matrix([1,2,3,4]), np.array([[1, 2], [3, 4]])],
+    [[1, 2, 3, 4], np.array([[1, 2], [3, 4]])],
+    [np.array([[1, 2, 3, 4]]).reshape((4, )), np.array([[1, 2], [3, 4]])],
+    [np.array([[1, 2, 3, 4]]).reshape((1, 4)), np.array([[1, 2], [3, 4]])],
+    [[[1, 2], [3, 4]], np.array([[1, 2], [3, 4]])],
+    [[(1, 2), (3, 4)], np.array([[1, 2], [3, 4]])],
+    [((1, 2), (3, 4)), np.array([[1, 2], [3, 4]])],
+    [np.array([[1, 2], [3, 4]]), np.array([[1, 2], [3, 4]])],
+    [np.array([1,2,3,4]).reshape((1, 2, 2)), np.matrix([1,2,3,4]).reshape((2,2))],
+    [np.array([1,2,3,4,1,2,3,4]).reshape((2,4)), None],
+    [np.array([1,2,3,4,5,6]).reshape((2,3)), None],
+    [np.array([1,2,3,4,5,6]).reshape((2,1,1,3)), None],
     [np.array([1,2,3,4,5,6,7,8]).reshape((2,2,2)), None],
 ])
 def test_sqmat(a, b):
@@ -53,7 +56,7 @@ def test_sqmat(a, b):
         assert False, 'should have failed...'
 
     c = sqmat(a)
-    assert isinstance(c, np.matrix)
+    assert isinstance(c, np.ndarray)
     assert c.shape == b.shape
     assert np.all(c == b)
 

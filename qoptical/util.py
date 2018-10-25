@@ -5,6 +5,12 @@
 import numpy as np
 from . import settings
 
+def H(a):
+    return a.conj().T
+
+def is_H(a):
+    return np.all(H(a) == a)
+
 
 def eigh(h0):
     """ returns eigensystem such that the states
@@ -30,42 +36,74 @@ def is_sqmat(a):
            and a.shape[0] == a.shape[1]
 
 
-def sqmat(mat):
-    """ normalizes and validates an input ``mat``
-        and returns an instance of `np.matrix` such that
-        `shape[0] == shape[1]`.
+def sqmat(a, dtype=None):
+    """ normalizes a mixed input to a single
+        numpy array of shape (d, d). If not possible
+        a `ValueError` is raised.
 
-        Example:
+        Arguments:
+        ----------
+
+        :a: square-matrix-like input, e.g.
+
+            [1, 2, 3, 4]
+            (1, 2, 3, 4)
+            [(1, 3), (4, 2)],
+            np.array([1,2,3,4])
+            ...
+
+        Returns:
         --------
 
-        sqmat([1,2,3,4])
+        np.ndarray with shape (d, d)
 
-        >> np.matrix([[1,2],[3,4]])
+        """
 
-    """
-
-    if isinstance(mat, np.ndarray) or isinstance(mat, list):
+    if isinstance(a, list):
         try:
-            mat = np.matrix(mat)
+            a = np.array(a, dtype=dtype or settings.QOP.T_COMPLEX)
         except ValueError as e:
-            raise ValueError((
-                'cannot be interpreted as a numpy matrix: {}'
-            ).format(e))
+            err = 'cannot be interpreted as a numpy matrix: {}'
+            raise ValueError(err.format(e))
 
-    assert isinstance(mat, np.matrix)
+    if not isinstance(a, (np.ndarray, np.matrix, tuple)):
+        err = "value of type {} not accepted."
+        raise ValueError(err.format(type(err)))
 
-    if mat.shape[0] == 1:
-        assert is_square(mat.shape[1]), "not square"
-        sqint = int(np.sqrt(mat.shape[1]))
-        return mat.reshape((sqint, sqint))
-    elif len(mat.shape) == 2:
-        assert mat.shape[0] == mat.shape[1], "not square"
-        return mat
-    else:
-        raise ValueError((
-            'could not understand object of '
-            'shape {} as square matrix'
-        ).format(mat.shape))
+    b = np.array(a)
+
+    if len(b.shape) == 1:
+        if not is_square(b.shape[0]):
+            err = '1-dim shape (d, ): d must be square number, {} given.'
+            raise ValueError(err.format(b.shape))
+
+        sqint = int(np.sqrt(b.shape[0]))
+        return b.reshape((sqint, sqint))
+
+    if len(b.shape) == 2 and b.shape[0] == 1:
+        if not is_square(b.shape[1]):
+            err = '2-dim shape (1, d): d must be square number, {} given.'
+            raise ValueError(err.format(b.shape))
+
+        sqint = int(np.sqrt(b.shape[1]))
+        return b.reshape((sqint, sqint))
+
+    elif len(b.shape) == 2:
+        if b.shape[0] != b.shape[1]:
+            err = '2-dim shape (d, e): d must equal e, {} given.'
+            raise ValueError(err.format(b.shape))
+
+        return b
+
+    elif len(b.shape) == 3 and b.shape[0] == 1:
+        if b.shape[1] != b.shape[2]:
+            err = '2-dim shape (1, d, e): d must equal e, {} given.'
+            raise ValueError(err.format(b.shape))
+
+        return b.reshape(b.shape[1:3])
+
+    err = 'could not understand object of shape {} as square matrix'
+    raise ValueError(err.format(b.shape))
 
 
 def ketbra(s, i, j=None):

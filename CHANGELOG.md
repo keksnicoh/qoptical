@@ -1,7 +1,9 @@
 # CHANGELOG
 
 ## 0.0
-- **2018-10.12**:
+- **2018-10-25**:
+    - removed np.matrix()
+- **2018-10-12**:
     - Fixed bug which lead to uncontrolable divergence in the OpenCL integrator.
 - **2018-09-21**:
     - fixed bug in rk4 butcher schema of OpenCLKernel.

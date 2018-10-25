@@ -48,9 +48,9 @@ class ReducedSystem():
 
         # validate
         assert tw is None or jumps is None,             'overdetermined args'
-        assert np.all(h0.H == h0),                      'h0 must be hermitian'
+        assert is_H(h0),                      'h0 must be hermitian'
         if dipole is not None:
-            assert np.all(dipole.H == dipole),          'dipole transition moment must be hermitian'
+            assert is_H(dipole),          'dipole transition moment must be hermitian'
             assert np.all(dipole.shape == h0.shape),    'dipole transition moment must match h0'
         assert n_htl >= 0,                              'n_htl must 0 or positive.'
         assert n_e_ops >= 0,                            'n_e_ops must 0 or positive.'
@@ -117,7 +117,8 @@ class ReducedSystem():
         if self.dipole is None:
             return 1 if i != j else 0
 
-        return (self.s[j] @ self.dipole @ self.s[i].T.conj())[0, 0]
+        # <s_j|D|s_i>
+        return (self.s[j:j+1] @ self.dipole @ self.s[i:i+1].T.conj())[0, 0]
 
 
     def dipole_eb(self):

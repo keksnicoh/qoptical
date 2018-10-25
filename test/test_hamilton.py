@@ -11,18 +11,18 @@ from qoptical import settings
 
 @pytest.mark.parametrize("args, kwargs, valid", [
     # valid
-    [[[1,1,1,1]], {}, True],
-    [[np.array([1,1,1,1])], {}, True],
-    [[np.array([1,1,1,1]).reshape((2,2)),], {}, True],
-    [[np.mat([1,1,1,1])], {}, True],
-    [[np.mat([1,1,1,1]).reshape((2,2))], {}, True],
-    [[np.mat([1,1,1,1]).reshape((2,2)), [1,1,1,1]], {}, True],
-    [[np.mat([1,1,1,1]).reshape((2,2)), [1,1,1,1]], {}, True],
+    [[[1, 1, 1, 1]], {}, True],
+    [[np.array([1, 1, 1, 1])], {}, True],
+    [[np.array([1, 1, 1, 1]).reshape((2, 2)),], {}, True],
+    [[np.mat([1, 1, 1, 1])], {}, True],
+    [[np.mat([1, 1, 1, 1]).reshape((2, 2))], {}, True],
+    [[np.mat([1, 1, 1, 1]).reshape((2, 2)), [1, 1, 1, 1]], {}, True],
+    [[np.mat([1, 1, 1, 1]).reshape((2, 2)), [1, 1, 1, 1]], {}, True],
 
     # invalid
-    [[np.mat([1,1,1,1]).reshape((2,2))], {'dipole': [1,2,3]}, False],
-    [[np.mat([1,1,-1,1]).reshape((2,2))], {}, False],
-    [[np.mat([1,1,1,1]).reshape((2,2)), [1,-1,1,1]], {}, False],
+    [[np.mat([1, 1, 1, 1]).reshape((2, 2))], {'dipole': [1, 2, 3]}, False],
+    [[np.mat([1, 1, -1, 1]).reshape((2, 2))], {}, False],
+    [[np.mat([1, 1, 1, 1]).reshape((2, 2)), [1, -1, 1, 1]], {}, False],
   ])
 def test_invalid_constructor_args(args, kwargs, valid):
     """ test instantiation of ``ReducedSystem`` """
@@ -31,7 +31,7 @@ def test_invalid_constructor_args(args, kwargs, valid):
     else:
         try:
             hamilton.ReducedSystem(*args, **kwargs)
-        except AssertionError:
+        except ValueError:
             return
         assert False
 
@@ -93,8 +93,10 @@ def test_non_eb():
 
 
     # -- thermal_state() method tests
-    rho_tinf = h0c.s[0].conj().T @ h0c.s[0] + h0c.s[1].conj().T @ h0c.s[1] + h0c.s[2].conj().T @ h0c.s[2]
-    rho_tzero = h0c.s[0].conj().T @ h0c.s[0]
+    rho_tinf = h0c.s[0:1].conj().T @ h0c.s[0:1]\
+             + h0c.s[1:2].conj().T @ h0c.s[1:2]\
+             + h0c.s[2:3].conj().T @ h0c.s[2:3]
+    rho_tzero = h0c.s[0:1].conj().T @ h0c.s[0:1]
 
     # test thermal state at t=0
     assert_allclose(h0c.thermal_state(T=0), rho_tzero, atol=1e-5, rtol=1e-7)
