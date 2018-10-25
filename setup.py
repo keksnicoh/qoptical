@@ -4,4 +4,4 @@ setup(
     name="qoptical",
     packages=find_packages(),
     requires=["numpy", "scipy", "mako", "pybind11", "pyopencl", "pytest", "cython", "qutip"],
-])
+)
