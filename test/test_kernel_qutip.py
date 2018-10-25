@@ -44,7 +44,7 @@ def test_jump():
 
     assert 3.0 == lindblads[0][0]
     assert np.all(
-        np.matrix([
+        np.array([
             [0, 0, 0, 0],
             [0, 0, 0, 1],
             [0, 0, 0, 0],
@@ -53,7 +53,7 @@ def test_jump():
 
     assert 4.0 == lindblads[1][0]
     assert np.all(
-        np.matrix([
+        np.array([
             [0, 0, 0, 1],
             [0, 0, 0, 0],
             [0, 0, 0, 0],
@@ -62,7 +62,7 @@ def test_jump():
 
     assert 1.0 == lindblads[2][0]
     assert np.all(
-        np.matrix([
+        np.array([
             [0, 1, 0, 0],
             [0, 0, 1, 0],
             [0, 0, 0, 0],
@@ -71,7 +71,7 @@ def test_jump():
 
     assert 2.0 == lindblads[3][0]
     assert np.all(
-        np.matrix([
+        np.array([
             [0, 0, 1, 0],
             [0, 0, 0, 0],
             [0, 0, 0, 1],
@@ -248,10 +248,10 @@ def test_qutip_kernel_nontrivial_basis():
     """ this test aims to test a system
         where h0 is non-diagonal.
     """
-    h0 = np.matrix([-1, 0, 1, 0,
-                     0, 1, 0, 0,
-                     1, 0, 4, 1,
-                     0, 0, 1, 12]).reshape((4, 4))
+    h0 = np.array([-1, 0, 1, 0,
+                   0, 1, 0, 0,
+                   1, 0, 4, 1,
+                   0, 0, 1, 12]).reshape((4, 4))
     ev, st = eigh(h0)
     T      = 0.5
     # partition sum

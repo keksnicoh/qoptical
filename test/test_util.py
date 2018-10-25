@@ -24,7 +24,6 @@ def test_is_square(a, square):
     [np.array([1, 2, 3, 4]), False],
     [np.array([1, 2, 3, 4]).reshape((2,2)), True],
     [np.array([1, 2, 3, 4, 5, 6]).reshape((3,2)), False],
-    [np.matrix([[1,2],[3,4]]), True],
 ])
 def test_is_sqmat(a, square):
     assert is_sqmat(a) is square
@@ -33,7 +32,6 @@ def test_is_sqmat(a, square):
 @pytest.mark.parametrize("a, b", [
     [1, None],
     ["york", None],
-    [np.matrix([1,2,3,4]), np.array([[1, 2], [3, 4]])],
     [[1, 2, 3, 4], np.array([[1, 2], [3, 4]])],
     [np.array([[1, 2, 3, 4]]).reshape((4, )), np.array([[1, 2], [3, 4]])],
     [np.array([[1, 2, 3, 4]]).reshape((1, 4)), np.array([[1, 2], [3, 4]])],
@@ -41,7 +39,6 @@ def test_is_sqmat(a, square):
     [[(1, 2), (3, 4)], np.array([[1, 2], [3, 4]])],
     [((1, 2), (3, 4)), np.array([[1, 2], [3, 4]])],
     [np.array([[1, 2], [3, 4]]), np.array([[1, 2], [3, 4]])],
-    [np.array([1,2,3,4]).reshape((1, 2, 2)), np.matrix([1,2,3,4]).reshape((2,2))],
     [np.array([1,2,3,4,1,2,3,4]).reshape((2,4)), None],
     [np.array([1,2,3,4,5,6]).reshape((2,3)), None],
     [np.array([1,2,3,4,5,6]).reshape((2,1,1,3)), None],
