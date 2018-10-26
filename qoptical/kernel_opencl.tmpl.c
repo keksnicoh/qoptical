@@ -38,7 +38,7 @@ __kernel void opmesolve_rk4_eb(
     __local $(cfloat_t) _hu[IN_BLOCK_SIZE];
     __local $(cfloat_t) _h0[IN_BLOCK_SIZE];
     __local $(cfloat_t) _rky[IN_BLOCK_SIZE];
-    __local t_jump _jb[IN_BLOCK_SIZE * N_JUMP];
+    //__local t_jump _jb[IN_BLOCK_SIZE * N_JUMP];
 
     // thread layout related private scope
     int __in_offset, __item, __itemT, __out_len, __idx, __idy;
@@ -53,7 +53,10 @@ __kernel void opmesolve_rk4_eb(
     // note: this enhanced the performance around 20-50%
     //       (feature/clkernel-performance-1)
     for (int k = 0; k < N_JUMP; ++k) {
-        _jb[N_JUMP * __item + k] = jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item + k];
+        // @todo
+        // - local memory too big. We need to rethink this, otherwise
+        //   dimH < 17...
+        //_jb[N_JUMP * __item + k] = jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item + k];
     }
 
     // init local memory

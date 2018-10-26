@@ -1,6 +1,8 @@
 # CHANGELOG
 
 ## 0.0
+- **2018-10-26**:
+    - removed performance feature since the allocated shared memory exceeded.
 - **2018-10-25**:
     - removed np.matrix()
 - **2018-10-12**:
