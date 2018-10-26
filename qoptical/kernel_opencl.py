@@ -580,6 +580,7 @@ class OpenCLKernel():
         arg_dt = QOP.T_FLOAT(rk4_config[1])
 
         for i in np.arange(0, rk4_config[2] - 1, steps_chunk_size):
+            td1 = time()
             arg_t0 = QOP.T_FLOAT(rk4_config[0] + i * rk4_config[1])
             arg_n_int = QOP.T_INT(np.minimum(steps_chunk_size, rk4_config[2] - i))
 
@@ -595,11 +596,15 @@ class OpenCLKernel():
 
             # external buffers (for custom injected code via debug hooks for example).
             b_external = [x[1] for x in self.cl_debug_buffers]
+            dtd1 = time()-td1
 
             # run kernel
             t0 = time()
             vargs = (*bufs, *b_external, b_rho0, arg_t0, arg_dt, arg_n_int)
+
+            td2 = time()
             self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *vargs)
+            dtd2 = time() - td2
             self.queue.finish()
             b_rho0.release()
             dt1, t0 = time() - t0, time()
@@ -615,9 +620,12 @@ class OpenCLKernel():
             # print something interesting
             if self.debug:
                 progress = str(int(np.round(100 * (i + arg_n_int) / rk4_config[2])))
-                dbg_args = (progress, idx[0], idx[1], *work_layout, dt1, dt2, )
+                dbg_args = (progress, idx[0], idx[1], *work_layout, dtd1, dtd2, dt1, dt2, )
                 dmsg = "\033[s\033[36m{:>3s}\033[0m % [{}-{}] global={}, local={} "\
-                     + "- took GPU \033[34m{:.4f}s\033[0m CPU \033[34m{:.4f}s\033[0m\033[1A\033[u"
+                     + "- took PRE \033[34m{:.4f}s\033[0m "\
+                     + "QUEUE \033[34m{:.4f}s\033[0m "\
+                     + "GPU \033[34m{:.4f}s\033[0m "\
+                     + "CPU \033[34m{:.4f}s\033[0m\033[1A\033[u"
                 print_debug(dmsg.format(*dbg_args))
 
 
