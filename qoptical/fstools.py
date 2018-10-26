@@ -14,7 +14,6 @@ def is_json_persistable(v):
     return isinstance(v, (str, int, float)) \
         or (isinstance(v, list) and np.all([is_json_persistable(vv) for vv in v])) \
         or (isinstance(v, dict) and True)
-#np.all([is_json_persistable(vv) for vv in v.values()])
 
 
 def is_np_persistable(v):
