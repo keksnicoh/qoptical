@@ -4,6 +4,7 @@ from .hamilton import ReducedSystem
 from .kernel_opencl import opmesolve_cl_expect
 from .fstools import persist_fs, load_fs
 from .settings import QOP as QO
+from . import math
 
 __all__ = [
     # general
@@ -16,4 +17,6 @@ __all__ = [
 
     # short-hand solvers
     'opmesolve_cl_expect',
+
+    'math',
 ]
