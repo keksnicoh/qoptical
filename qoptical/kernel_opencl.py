@@ -68,7 +68,8 @@ def opmesolve_cl_expect(tg,
                         params=None,
                         rec_skip=1,
                         ctx=None,
-                        queue=None):
+                        queue=None,
+                        steps_chunk_size=1e4):
     """ evolves expectation value on time gatte `tr`.
 
         Parameters:
@@ -133,7 +134,7 @@ def opmesolve_cl_expect(tg,
     Oeb = kernel.system.op2eb(Oexpect)
 
     # run
-    for idx, tlist, rho_eb in kernel.run(tg, steps_chunk_size=1e4):
+    for idx, tlist, rho_eb in kernel.run(tg, steps_chunk_size=steps_chunk_size):
         sidx = (int(np.ceil(idx[0] / rec_skip)), int(np.ceil(idx[1] / rec_skip)))
         nrho = result[sidx[0]:sidx[1]+1].shape[0]
         result[sidx[0]:sidx[1]+1] = np.trace(rho_eb[::rec_skip][:nrho] @ Oeb, axis1=2, axis2=3)
