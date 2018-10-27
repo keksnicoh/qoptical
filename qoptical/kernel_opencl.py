@@ -390,10 +390,10 @@ class OpenCLKernel():
 
             coeffx = "coeff[{i}] = htcoeff{i}(/*{{t}}*/, sysparam[GID]);"
             tpl_coeff = ''
-            tpl_coeff = '\n/*{s}*/if (isfirst) {'\
+            tpl_coeff = '\n/*{s}*/'\
                       + '\n/*{s}*/    '\
                       + '\n/*{s}*/    '.join(coeffx.format(i=i) for i in range(n_htl))\
-                      + '\n/*{s}*/}'
+                      + '\n/*{s}*/'
             r_local_coeff = "__local $(float) coeff[{}];".format(n_htl)
 
 
