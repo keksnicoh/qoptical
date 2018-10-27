@@ -404,14 +404,14 @@ class OpenCLKernel():
                    "_rky[jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].IDX]));")
         r_define_rk = '\\\n    '.join(
             [cx_unitary.format(i=r_clint(i)) for i in range(M)]
-            + ["K = $(cfloat_rmul)(1.0f, K);"]
-            + ["K = $(cfloat_rmul)(1.0f, K);"]
-            + ["K = $(cfloat_rmul)(1.0f, K);"]
-            + ["K = $(cfloat_rmul)(1.0f, K);"]
-            + ["K = $(cfloat_rmul)(1.0f, K);"]
-            + ["K = $(cfloat_rmul)(1.0f, K);"]
-            + ["K = $(cfloat_rmul)(1.0f, K);"]
-            + ["K = $(cfloat_rmul)(1.0f, K);"]
+            + ["K = $(cfloat_mul)(ihbar, K);"]
+            + ["K = $(cfloat_mul)(ihbar, K);"]
+            + ["K = $(cfloat_mul)(ihbar, K);"]
+            + ["K = $(cfloat_mul)(ihbar, K);"]
+            + ["K = $(cfloat_mul)(ihbar, K);"]
+            + ["K = $(cfloat_mul)(ihbar, K);"]
+            + ["K = $(cfloat_mul)(ihbar, K);"]
+            + ["K = $(cfloat_mul)(ihbar, K);"]
             + [cx_jump.format(i=r_clint(i)) for i in range(self.jmp_n)])
 
         # -- Contants
