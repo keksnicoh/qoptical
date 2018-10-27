@@ -72,12 +72,14 @@ __kernel void opmesolve_rk4_eb(
 
     bool isfirst = false;
     if (__idx == 0 && __idy == 0) {
-        isfirst = true;
+        isfirst = true;/*{sysp}*/
     }
+
     /*{htl_coefft0}*/
 
     barrier(CLK_LOCAL_MEM_FENCE);
-    HTL(t0)
+    // t0
+    HTL()
     barrier(CLK_LOCAL_MEM_FENCE);
 
     bool non_diag = true;

@@ -319,6 +319,7 @@ class OpenCLKernel():
         # coeff_tpl
         tpl_coeff = ""
         r_local_coeff = ""
+        r_sysp = ""
         # macro to refresh the value of time dependent
         # hamilton at a specific time.
         r_htl = ""
@@ -362,7 +363,7 @@ class OpenCLKernel():
 
         # ---- DYNAMIC HAMILTON
         n_htl = 0
-        r_htl = '#define HTL(T)\\\n   _hu[__item] = _h0[__item];'
+        r_htl = '#define HTL()\\\n   _hu[__item] = _h0[__item];'
         if self.ht_coeff is not None:
             n_htl = len(self.ht_coeff)
             # compile coefficient function to OpenCL
@@ -388,14 +389,15 @@ class OpenCLKernel():
             r_arg_htl = '\n    ' \
                       + '\n    '.join(cx.format(i=i) for i in range(n_htl))
 
-            coeffx = "coeff[{i}] = htcoeff{i}(/*{{t}}*/, sysparam[GID]);"
+            coeffx = "coeff[{i}] = htcoeff{i}(/*{{t}}*/, sysp);"
             tpl_coeff = ''
             tpl_coeff = '\n/*{s}*/if (isfirst) {'\
                       + '\n/*{s}*/    '\
                       + '\n/*{s}*/    '.join(coeffx.format(i=i) for i in range(n_htl))\
                       + '\n/*{s}*/}'
-            r_local_coeff = "__local $(float) coeff[{}];".format(n_htl)
-
+            r_local_coeff = "__local $(float) coeff[{}];\n".format(n_htl)\
+                          + "    __local t_sysparam sysp;"
+            r_sysp = "\n    sysp = sysparam[GID];"
 
         # -- MAIN MAKRO
 
@@ -458,6 +460,7 @@ class OpenCLKernel():
                                htl_coefftdt2=r_tmpl(tpl_coeff, t='t + dt / 2.0f', s='    ' * 2),
                                htl_coefftdt=r_tmpl(tpl_coeff, t='t + dt', s='    ' * 2),
                                local_coeff=r_local_coeff,
+                               sysp=r_sysp,
                                arg_htl=r_arg_htl,
                                arg_debug=r_arg_debug,
                                debug_hook_1=r_debug_hook_1,
