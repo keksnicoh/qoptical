@@ -150,7 +150,7 @@ __kernel void opmesolve_rk4_eb(
 
         result[OUT_IDX0 + __item] = _rho;
         if (non_diag) {
-            result[OUT_IDX0 + __itemT] = $(cfloat_conj)(_rho);
+        //    result[OUT_IDX0 + __itemT] = $(cfloat_conj)(_rho);
         }
 
         /*{debug_hook_1}*/
