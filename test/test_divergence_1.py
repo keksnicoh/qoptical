@@ -67,16 +67,17 @@ def test_divergence_1():
     rs  = qo.ReducedSystem(Oh0, dipole=Osin(config['dimH'], qo.QO.T_COMPLEX))
 
     # -- Run with QuTip
-    kernel = QutipKernel(rs)
-    kernel.compile()
-    kernel.sync(t_bath=config['t_bath'], y_0=config['y_0'], state=rs.thermal_state(T=config['t_rho0']))
-    tlist = qo.time_gatter(*config['tr'])
-    result = kernel.run(tlist).tstate
+  #  kernel = QutipKernel(rs)
+  #  kernel.compile()
+  #  kernel.sync(t_bath=config['t_bath'], y_0=config['y_0'], state=rs.thermal_state(T=config['t_rho0']))
+  #  tlist = qo.time_gatter(*config['tr'])
+  #  result = kernel.run(tlist).tstate
 
     # -- Run with OpenCL kernel
     kernelCL = OpenCLKernel(rs)
     kernelCL.optimize_jumps = True
     kernelCL.compile()
+    print(kernelCL.c_kernel)
     kernelCL.sync(t_bath=config['t_bath'], y_0=config['y_0'], state=rs.thermal_state(T=config['t_rho0']))
     tlist_cl, resultCL = kernelCL.reader_rho_t(kernelCL.run(config['tr'], steps_chunk_size=1e4))
 

@@ -38,6 +38,7 @@ __kernel void opmesolve_rk4_eb(
     __local $(cfloat_t) _hu[IN_BLOCK_SIZE];
     __local $(cfloat_t) _h0[IN_BLOCK_SIZE];
     __local $(cfloat_t) _rky[IN_BLOCK_SIZE];
+    __local $(cfloat_t) _tmp[LOCAL_SIZE];
     __local $(float) dta21, dta31, dta32;
     __local $(float) dtb1, dtb2, dtb3;
 
@@ -89,26 +90,29 @@ __kernel void opmesolve_rk4_eb(
     while (n < n_int) {
         /*{debug_hook_0}*/
         // k1
-        k1 = $(cfloat_fromreal)(0.0f);
+        _tmp[LX] = $(cfloat_fromreal)(0.0f);
         _rky[__item] = _rho;
         HERM
 
         barrier(CLK_LOCAL_MEM_FENCE);
-        RK(k1)
+        RK(_tmp[LX])
+        k1 = _tmp[LX];
         barrier(CLK_LOCAL_MEM_FENCE);
 
         // k2
+        _tmp[LX] = $(cfloat_fromreal)(0.0f);
         k2 = $(cfloat_fromreal)(0.0f);
         _rky[__item] = $(cfloat_add)(_rho, $(cfloat_rmul)(dta21, k1));
         HTL(t + dt / 2.0f)
         HERM
 
         barrier(CLK_LOCAL_MEM_FENCE);
-        RK(k2)
+        RK(_tmp[LX])
+        k2 = _tmp[LX];
         barrier(CLK_LOCAL_MEM_FENCE);
 
         // k3
-        k3 = $(cfloat_fromreal)(0.0f);
+        _tmp[LX] = $(cfloat_fromreal)(0.0f);
         _rky[__item] = $(cfloat_add)(
             _rho,
             $(cfloat_add)(
@@ -121,7 +125,8 @@ __kernel void opmesolve_rk4_eb(
         HERM
 
         barrier(CLK_LOCAL_MEM_FENCE);
-        RK(k3)
+        RK(_tmp[LX])
+        k3 = _tmp[LX];
         barrier(CLK_LOCAL_MEM_FENCE);
 
         _rho = $(cfloat_add)(
