@@ -38,6 +38,9 @@ __kernel void opmesolve_rk4_eb(
     __local $(cfloat_t) _hu[IN_BLOCK_SIZE];
     __local $(cfloat_t) _h0[IN_BLOCK_SIZE];
     __local $(cfloat_t) _rky[IN_BLOCK_SIZE];
+    __local $(float) dta21, dta31, dta32;
+    __local $(float) dtb1, dtb2, dtb3;
+
     //__local t_jump _jb[IN_BLOCK_SIZE * N_JUMP];
 
     // thread layout related private scope
@@ -71,6 +74,13 @@ __kernel void opmesolve_rk4_eb(
     bool non_diag = true;
     if (__idx == __idy) {
         non_diag = false;
+
+        dta21 = a21 * dt;
+        dta31 = a31 * dt;
+        dta32 = a32 * dt;
+        dtb1 = b1 * dt;
+        dtb2 = b2 * dt;
+        dtb3 = b3 * dt;
     }
 
     // loop init
@@ -90,8 +100,7 @@ __kernel void opmesolve_rk4_eb(
 
         // k2
         k2 = $(cfloat_fromreal)(0.0f);
-        _rky[__item].real = _rho.real + a21 * dt * k1.real;
-        _rky[__item].imag = _rho.imag + a21 * dt * k1.imag;
+        _rky[__item] = $(cfloat_add)(_rho, $(cfloat_rmul)(dta21, k1));
         HTL(t + dt / 2.0f)
         HERM
 
@@ -101,8 +110,14 @@ __kernel void opmesolve_rk4_eb(
 
         // k3
         k3 = $(cfloat_fromreal)(0.0f);
-        _rky[__item].real = _rho.real + a31 * dt * k1.real + a32 * dt * k2.real;
-        _rky[__item].imag = _rho.imag + a31 * dt * k1.imag + a32 * dt * k2.imag;
+        _rky[__item] = $(cfloat_add)(
+            _rho,
+            $(cfloat_add)(
+                $(cfloat_rmul)(dta31, k1),
+                $(cfloat_rmul)(dta32, k2)
+            )
+        );
+
         HTL(t + dt)
         HERM
 
@@ -110,8 +125,16 @@ __kernel void opmesolve_rk4_eb(
         RK(k3)
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        _rho.real += dt * (b1 * k1.real + b2 * k2.real + b3 * k3.real);
-        _rho.imag += dt * (b1 * k1.imag + b2 * k2.imag + b3 * k3.imag);
+        _rho = $(cfloat_add)(
+            _rho,
+            $(cfloat_add)(
+                $(cfloat_rmul)(dtb1, k1),
+            $(cfloat_add)(
+                $(cfloat_rmul)(dtb2, k2),
+                $(cfloat_rmul)(dtb3, k3)
+            ))
+        );
+
         result[OUT_IDX0 + __item] = _rho;
         if (non_diag) {
             result[OUT_IDX0 + __itemT] = $(cfloat_conj)(_rho);

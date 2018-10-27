@@ -428,7 +428,7 @@ class OpenCLKernel():
         # -- Thread Layout
         kij = enumerate((i, j) for i in range(M) for j in range(M) if i < j + 1)
         r_tl = '\n'.join(
-            ['int2 _idx[LOCAL_SIZE];']
+            ['__local int2 _idx[LOCAL_SIZE];']
             + ['    _idx[{}] = (int2)({}, {});'.format(k, i, j) for (k, (i, j)) in kij]
         )
 
