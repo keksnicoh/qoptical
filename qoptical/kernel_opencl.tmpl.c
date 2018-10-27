@@ -33,14 +33,14 @@ __kernel void opmesolve_rk4_eb(
     $(float) t;
     int n;
     /*{tl}*/
-    __local $(cfloat_t) ihbar;
+    $(cfloat_t) ihbar = $(cfloat_new)(0.0f, -1.0f / NATURE_HBAR);
     $(cfloat_t) k1, k2, k3, _rho;
     __local $(cfloat_t) _hu[IN_BLOCK_SIZE];
     __local $(cfloat_t) _h0[IN_BLOCK_SIZE];
     __local $(cfloat_t) _rky[IN_BLOCK_SIZE];
     __local $(float) dta21, dta31, dta32;
     __local $(float) dtb1, dtb2, dtb3;
-    t_jump _jb;
+
     //__local t_jump _jb[IN_BLOCK_SIZE * N_JUMP];
 
     // thread layout related private scope
@@ -51,8 +51,6 @@ __kernel void opmesolve_rk4_eb(
     __item      = HDIM * __idx + __idy;
     __itemT     = HDIM * __idy + __idx;
     __out_len   = get_num_groups(0) * IN_BLOCK_SIZE;
-
-    int jidx = GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item;;
 
     // upload the jumping structure into local buffer.
     // note: this enhanced the performance around 20-50%
@@ -82,7 +80,6 @@ __kernel void opmesolve_rk4_eb(
         dtb1 = b1 * dt;
         dtb2 = b2 * dt;
         dtb3 = b3 * dt;
-        ihbar = $(cfloat_new)(0.0f, -1.0f / NATURE_HBAR);
     }
 
     // loop init
