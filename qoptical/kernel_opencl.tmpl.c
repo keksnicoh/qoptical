@@ -41,6 +41,7 @@ __kernel void opmesolve_rk4_eb(
     __local $(cfloat_t) _tmp[LOCAL_SIZE];
     __local $(float) dta21, dta31, dta32;
     __local $(float) dtb1, dtb2, dtb3;
+    /*{local_coeff}*/
 
     //__local t_jump _jb[IN_BLOCK_SIZE * N_JUMP];
 
@@ -69,6 +70,13 @@ __kernel void opmesolve_rk4_eb(
     _h0[__itemT] = hu[__in_offset + __itemT];
     /*{htl_priv}*/
 
+    bool isfirst = false;
+    if (__idx == 0 && __idy == 0) {
+        isfirst = true;
+    }
+    /*{htl_coefft0}*/
+
+    barrier(CLK_LOCAL_MEM_FENCE);
     HTL(t0)
     barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -97,11 +105,11 @@ __kernel void opmesolve_rk4_eb(
         barrier(CLK_LOCAL_MEM_FENCE);
         RK(_tmp[LX])
         k1 = _tmp[LX];
+        /*{htl_coefftdt2}*/
         barrier(CLK_LOCAL_MEM_FENCE);
 
         // k2
         _tmp[LX] = $(cfloat_fromreal)(0.0f);
-        k2 = $(cfloat_fromreal)(0.0f);
         _rky[__item] = $(cfloat_add)(_rho, $(cfloat_rmul)(dta21, k1));
         HTL(t + dt / 2.0f)
         HERM
@@ -109,6 +117,7 @@ __kernel void opmesolve_rk4_eb(
         barrier(CLK_LOCAL_MEM_FENCE);
         RK(_tmp[LX])
         k2 = _tmp[LX];
+        /*{htl_coefftdt}*/
         barrier(CLK_LOCAL_MEM_FENCE);
 
         // k3

@@ -316,6 +316,9 @@ class OpenCLKernel():
         # kernel arguments for time dependent
         # hamilton buffer
         r_arg_htl = ""
+        # coeff_tpl
+        tpl_coeff = ""
+        r_local_coeff = ""
         # macro to refresh the value of time dependent
         # hamilton at a specific time.
         r_htl = ""
@@ -369,7 +372,7 @@ class OpenCLKernel():
 
             # render HTL makro contributions due to H(T)
             cx = ("_hu[__item] = $(cfloat_add)(_hu[__item], "
-                  "$(cfloat_rmul)(htcoeff{i}(T, sysparam[GID]), "
+                  "$(cfloat_rmul)(coeff[{i}], "
                   "htl[{i}]));")
             r_htl += '\\\n   ' \
                    + '\\\n   '.join([cx.format(i=i) for i in range(n_htl)])
@@ -384,6 +387,15 @@ class OpenCLKernel():
             cx = "__global const $(cfloat_t) *ht{i},"
             r_arg_htl = '\n    ' \
                       + '\n    '.join(cx.format(i=i) for i in range(n_htl))
+
+            coeffx = "coeff[{i}] = htcoeff{i}(/*{{t}}*/, sysparam[GID]);"
+            tpl_coeff = ''
+            tpl_coeff = '\n/*{s}*/if (isfirst) {'\
+                      + '\n/*{s}*/    '\
+                      + '\n/*{s}*/    '.join(coeffx.format(i=i) for i in range(n_htl))\
+                      + '\n/*{s}*/}'
+            r_local_coeff = "__local $(float) coeff[{}];".format(n_htl)
+
 
         # -- MAIN MAKRO
 
@@ -404,8 +416,6 @@ class OpenCLKernel():
                    "_rky[jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].IDX]));")
         r_define_rk = '\\\n    '.join(
             [cx_unitary.format(i=r_clint(i)) for i in range(M)]
-         #   + ["K = $(cfloat_mul)(ihbar, K);"]
-
             + [cx_jump.format(i=r_clint(i)) for i in range(self.jmp_n)])
 
         # -- Contants
@@ -444,6 +454,10 @@ class OpenCLKernel():
                                ht_coeff=r_cl_coeff,
                                htl_priv=r_htl_priv,
                                htl_macro=r_htl,
+                               htl_coefft0=r_tmpl(tpl_coeff, t='t0', s='    '),
+                               htl_coefftdt2=r_tmpl(tpl_coeff, t='t + dt / 2.0f', s='    ' * 2),
+                               htl_coefftdt=r_tmpl(tpl_coeff, t='t + dt', s='    ' * 2),
+                               local_coeff=r_local_coeff,
                                arg_htl=r_arg_htl,
                                arg_debug=r_arg_debug,
                                debug_hook_1=r_debug_hook_1,

@@ -673,6 +673,7 @@ def test_three_level_T_driving():
     kernel.t_sysparam = param.dtype
     kernel.ht_coeff = [lambda t, p: p['A'] * np.sin(p['b'] * t * np.pi)]
     kernel.compile()
+    print(kernel.c_kernel)
 
     kernel.sync(state=states, y_0=y_0, t_bath=t_bath, sysparam=param, htl=[htl])
     tf, rhof = kernel.reader_tfinal_rho(kernel.run(tr, steps_chunk_size=431))
