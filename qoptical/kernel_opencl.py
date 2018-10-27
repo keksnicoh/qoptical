@@ -397,7 +397,7 @@ class OpenCLKernel():
                       + '\n/*{s}*/}'
             r_local_coeff = "__local $(float) coeff[{}];\n".format(n_htl)\
                           + "    __local t_sysparam sysp;"
-            r_sysp = "\n    sysp = sysparam[GID];"
+            r_sysp = "\n        sysp = sysparam[GID];"
 
         # -- MAIN MAKRO
 

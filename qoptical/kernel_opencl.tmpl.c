@@ -33,7 +33,7 @@ __kernel void opmesolve_rk4_eb(
     $(float) t;
     int n;
     /*{tl}*/
-    $(cfloat_t) ihbar = $(cfloat_new)(0.0f, -1.0f / NATURE_HBAR);
+    __local $(cfloat_t) ihbar;
     $(cfloat_t) k1, k2, k3, _rho;
     __local $(cfloat_t) _hu[IN_BLOCK_SIZE];
     __local $(cfloat_t) _h0[IN_BLOCK_SIZE];
@@ -42,6 +42,8 @@ __kernel void opmesolve_rk4_eb(
     __local $(float) dta21, dta31, dta32;
     __local $(float) dtb1, dtb2, dtb3;
     /*{local_coeff}*/
+
+    ihbar = $(cfloat_new)(0.0f, -1.0f / NATURE_HBAR);
 
     //__local t_jump _jb[IN_BLOCK_SIZE * N_JUMP];
 
