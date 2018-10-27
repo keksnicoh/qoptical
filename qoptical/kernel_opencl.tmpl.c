@@ -111,7 +111,8 @@ __kernel void opmesolve_rk4_eb(
         // k2
         _tmp[LX] = $(cfloat_fromreal)(0.0f);
         _rky[__item] = $(cfloat_add)(_rho, $(cfloat_rmul)(dta21, k1));
-        HTL(t + dt / 2.0f)
+        // t + dt / 2.0f
+        HTL()
         HERM
 
         barrier(CLK_LOCAL_MEM_FENCE);
@@ -130,7 +131,8 @@ __kernel void opmesolve_rk4_eb(
             )
         );
 
-        HTL(t + dt)
+        // t + dt
+        HTL()
         HERM
 
         barrier(CLK_LOCAL_MEM_FENCE);
@@ -150,6 +152,7 @@ __kernel void opmesolve_rk4_eb(
 
         result[OUT_IDX0 + __item] = _rho;
         if (non_diag) {
+            // this has 0.001 impact
             result[OUT_IDX0 + __itemT] = $(cfloat_conj)(_rho);
         }
 
