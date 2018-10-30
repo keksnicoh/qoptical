@@ -584,12 +584,13 @@ class OpenCLKernel():
         h_rhot = np.zeros((steps_chunk_size, *self.h_state.shape), dtype=self.h_state.dtype)
         b_rhot = self.arr_to_buf(h_rhot, writeonly=True)
 
-        # initial integration state
+        # rho0 initial state
         h_rhot[-1] = self.h_state
 
         # prepare kernel args
         # each of the N states is evolved inside a work-group.
         work_layout = (self.N, self.cl_local_size), (1, self.cl_local_size)
+
         bufs = (self.b_hu, )
         if self.b_htl is not None:
             bufs += (*self.b_htl, )
@@ -599,55 +600,51 @@ class OpenCLKernel():
         bufs += (b_rhot, )
 
         arg_dt = QOP.T_FLOAT(rk4_config[1])
-
         last_arg_n_int = None
         for i in np.arange(0, rk4_config[2] - 1, steps_chunk_size):
-            arg_t0 = QOP.T_FLOAT(rk4_config[0] + i * rk4_config[1])
-            arg_n_int = QOP.T_INT(np.minimum(steps_chunk_size, rk4_config[2] - i))
+            t0 = time()
 
             # upload new t0 state and create buffer tuple
-            # h_rhot[-1] / np.trace(h_rhot[-1], axis1=1, axis2=2).reshape((h_rhot[-1].shape[0], 1, 1))
             b_rho0 = self.arr_to_buf(h_rhot[-1], readonly=True)
 
-            # external buffers (for custom injected code via debug hooks for example).
+            # (for custom injected code via debug hooks for example).
             b_external = [x[1] for x in self.cl_debug_buffers]
 
             # run kernel
-            t0 = time()
+            arg_t0 = QOP.T_FLOAT(rk4_config[0] + i * rk4_config[1])
+            arg_n_int = QOP.T_INT(np.minimum(steps_chunk_size, rk4_config[2] - i))
             vargs = (*bufs, *b_external, b_rho0, arg_t0, arg_dt, arg_n_int)
             self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *vargs)
 
-            # -- GPU+CPU parallel readout
+            # GPU + CPU parallel readout
             if parallel:
                 t1 = time()
                 if last_arg_n_int is not None:
                     yield (idx[0], idx[1]), tlist, h_rhot[0:last_arg_n_int]
                 last_arg_n_int = arg_n_int
                 dt1 = time() - t0
+                self.queue.finish()
+
+            cl.enqueue_copy(self.queue, h_rhot, b_rhot)
+            self.queue.finish()
+            b_rho0.release()
 
             # the idx represents the index of the full non-chunkwise evolution
             idx = i + 1, i + arg_n_int
             tlist = rk4_config[0] + np.arange(idx[0], idx[1] + 1) * arg_dt
 
-            # get state into ram
-            self.queue.finish()
-
             # -- GPU+CPU sequential readout
             if not parallel:
                 t1 = time()
-                yield (idx[0], idx[1]), tlist, h_rhot[0:arg_n_int]
+                yield idx, tlist, h_rhot[0:arg_n_int]
                 dt1 = time() - t0
 
-            cl.enqueue_copy(self.queue, h_rhot, b_rhot)
-            self.queue.finish()
-
-            b_rho0.release()
             dt0 = time() - t0
 
             # print something interesting
             if self.debug:
                 progress = str(int(np.round(100 * (i + arg_n_int) / rk4_config[2])))
-                dbg_args = (progress, idx[0], idx[1], *work_layout, dt0, dt1, )
+                dbg_args = (progress, *idx, *work_layout, dt0, dt1, )
                 dmsg = "\033[s\033[36m{:>3s}\033[0m % [{}-{}] global={}, local={} "\
                      + "GPU+CPU \033[34m{:.4f}s\033[0m "\
                      + "CPU \033[34m{:.4f}s\033[0m\033[1A\033[u"
@@ -657,7 +654,8 @@ class OpenCLKernel():
         # before CPU code is executed. Thus, the missing yield must
         # be performed outside the loop
         if parallel:
-            yield (idx[0], idx[1]), tlist, h_rhot[0:arg_n_int]
+            yield idx, tlist, h_rhot[0:arg_n_int]
+
 
     def arr_to_buf(self, arr, readonly=False, writeonly=False):
         """ helper to create a new buffer from np array.
