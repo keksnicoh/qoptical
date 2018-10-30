@@ -1,6 +1,8 @@
 # CHANGELOG
 
 ## 0.0
+- **2018-10-30**:
+    - GPU/CPU parallel execution in OpenCL Kernel
 - **2018-10-26**:
     - removed performance feature since the allocated shared memory exceeded.
 - **2018-10-25**:

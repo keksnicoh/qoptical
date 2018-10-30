@@ -302,7 +302,8 @@ class OpenCLKernel():
         # read template
         tpl_path = os.path.join(
             os.path.dirname(__file__),
-            self.__class__.TEMPLATE_NAME)
+            self.__class__.TEMPLATE_NAME
+        )
         with open(tpl_path) as f:
             src = f.read()
 
@@ -530,7 +531,7 @@ class OpenCLKernel():
                 for h_ht in self.h_htl
             ]
 
-    def run(self, tg, steps_chunk_size=1e4):
+    def run(self, tg, steps_chunk_size=1e4, parallel=True):
         """ runs the evolutions within given time gatter **tg**
 
             Arguments:
@@ -599,16 +600,10 @@ class OpenCLKernel():
 
         arg_dt = QOP.T_FLOAT(rk4_config[1])
 
+        last_arg_n_int = None
         for i in np.arange(0, rk4_config[2] - 1, steps_chunk_size):
-            td1 = time()
             arg_t0 = QOP.T_FLOAT(rk4_config[0] + i * rk4_config[1])
             arg_n_int = QOP.T_INT(np.minimum(steps_chunk_size, rk4_config[2] - i))
-
-            # the idx represent the index of the full non-chunkwise evolution
-            idx = i + 1, i + arg_n_int
-
-            # the current time gatter
-            tlist = rk4_config[0] + np.arange(idx[0], idx[1] + 1) * arg_dt
 
             # upload new t0 state and create buffer tuple
             # h_rhot[-1] / np.trace(h_rhot[-1], axis1=1, axis2=2).reshape((h_rhot[-1].shape[0], 1, 1))
@@ -616,38 +611,53 @@ class OpenCLKernel():
 
             # external buffers (for custom injected code via debug hooks for example).
             b_external = [x[1] for x in self.cl_debug_buffers]
-            dtd1 = time()-td1
 
             # run kernel
             t0 = time()
             vargs = (*bufs, *b_external, b_rho0, arg_t0, arg_dt, arg_n_int)
-
-            td2 = time()
             self.prg.opmesolve_rk4_eb(self.queue, *work_layout, *vargs)
-            dtd2 = time() - td2
-            self.queue.finish()
-            b_rho0.release()
-            dt1, t0 = time() - t0, time()
+
+            # -- GPU+CPU parallel readout
+            if parallel:
+                t1 = time()
+                if last_arg_n_int is not None:
+                    yield (idx[0], idx[1]), tlist, h_rhot[0:last_arg_n_int]
+                last_arg_n_int = arg_n_int
+                dt1 = time() - t0
+
+            # the idx represents the index of the full non-chunkwise evolution
+            idx = i + 1, i + arg_n_int
+            tlist = rk4_config[0] + np.arange(idx[0], idx[1] + 1) * arg_dt
 
             # get state into ram
+            self.queue.finish()
+
+            # -- GPU+CPU sequential readout
+            if not parallel:
+                t1 = time()
+                yield (idx[0], idx[1]), tlist, h_rhot[0:arg_n_int]
+                dt1 = time() - t0
+
             cl.enqueue_copy(self.queue, h_rhot, b_rhot)
             self.queue.finish()
 
-            # yield chunk result
-            yield (idx[0], idx[1]), tlist, h_rhot[0:arg_n_int]
-            dt2 = time() - t0
+            b_rho0.release()
+            dt0 = time() - t0
 
             # print something interesting
             if self.debug:
                 progress = str(int(np.round(100 * (i + arg_n_int) / rk4_config[2])))
-                dbg_args = (progress, idx[0], idx[1], *work_layout, dtd1, dtd2, dt1, dt2, )
+                dbg_args = (progress, idx[0], idx[1], *work_layout, dt0, dt1, )
                 dmsg = "\033[s\033[36m{:>3s}\033[0m % [{}-{}] global={}, local={} "\
-                     + "- took PRE \033[34m{:.4f}s\033[0m "\
-                     + "QUEUE \033[34m{:.4f}s\033[0m "\
-                     + "GPU \033[34m{:.4f}s\033[0m "\
+                     + "GPU+CPU \033[34m{:.4f}s\033[0m "\
                      + "CPU \033[34m{:.4f}s\033[0m\033[1A\033[u"
                 print_debug(dmsg.format(*dbg_args))
 
+        # if GPU+CPU parallel readout the GPU kernel is invoked twice
+        # before CPU code is executed. Thus, the missing yield must
+        # be performed outside the loop
+        if parallel:
+            yield (idx[0], idx[1]), tlist, h_rhot[0:arg_n_int]
 
     def arr_to_buf(self, arr, readonly=False, writeonly=False):
         """ helper to create a new buffer from np array.

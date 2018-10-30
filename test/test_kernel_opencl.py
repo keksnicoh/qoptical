@@ -539,7 +539,8 @@ def test_time_gatter():
     # the first index (0) is allready occupied by the initial state
     # given at kernel.sync we therefore expect the idx to start from 1.
     current_index = 1;
-    for j, (idx, tlist, rho_eb) in enumerate(kernel.run((0, 0.013, dt), steps_chunk_size=5)):
+    run_kwargs = {'steps_chunk_size': 5, 'parallel': False}
+    for j, (idx, tlist, rho_eb) in enumerate(kernel.run((0, 0.013, dt), **run_kwargs)):
         # -- test index
         assert idx[0] == current_index
         i1 = idx[1] - idx[0]
