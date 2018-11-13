@@ -63,6 +63,19 @@ class ReducedSystem():
         self.sarr = np.array(self.s)
         self.dimH = self.h0.shape[0]
 
+
+    def create_rs_dipole_ladder(self):
+        """
+        XXX Test this
+        """
+        dip_eb = self.dipole_eb()
+        r = np.arange(0, self.dimH-1)
+        ldip_eb = np.zeros_like(dip_eb)
+        ldip_eb[r, r + 1] = dip_eb[r, r + 1]
+        ldip_eb[r + 1, r] = dip_eb[r + 1, r]
+        return ReducedSystem(self.h0, self.eb2op(ldip_eb))
+
+
     def get_jumps(self):
         """ returns jumping configuration for the system
             """

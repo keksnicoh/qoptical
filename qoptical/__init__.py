@@ -1,4 +1,4 @@
-from .util import eigh, ketbra, thermal_dist, time_gatter
+from .util import eigh, ketbra, thermal_dist, time_gatter, reshape_list, fmap_nested_list
 from .opme import opmesolve
 from .hamilton import ReducedSystem
 from .kernel_opencl import opmesolve_cl_expect
@@ -19,4 +19,7 @@ __all__ = [
     'opmesolve_cl_expect',
 
     'math',
+
+    'reshape_list',
+    'fmap_nested_list',
 ]

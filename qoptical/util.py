@@ -5,11 +5,37 @@
 import numpy as np
 from . import settings
 
+
+def fmap_nested_list(f, lst):
+    # XXXXXXX TEST & FINALIZE
+    return [
+        f(a) if not isinstance(a, list) else fmap_nested_list(f, a)
+        for a in lst
+    ]
+
+def reshape_list(lst, shape):
+    # XXXXXXX TEST & FINALIZE
+    if len(shape) == 1:
+        return lst
+
+    cs = shape[-1]
+
+    n = len(lst) / cs
+    if not int(n) == n:
+        err = 'list of length {} canno be reshaped into {}'
+        raise ValueError(err.format(len(cfg), shape))
+
+    return reshape_list(
+        [lst[(i * cs):((i + 1) * cs)] for i in range(0, int(n))],
+        shape[0:-1]
+    )
+
+
 def H(a):
     return a.conj().T
 
 def is_H(a):
-    return np.all(H(a) == a)
+    return np.allclose(H(a), a, **settings.QOP.CLOSE_TOL)
 
 
 def eigh(h0):
