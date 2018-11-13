@@ -864,7 +864,7 @@ class OpenCLKernel():
             print_debug(msg, c_jmp_n_opt, QOP.COMPLEX_ZERO_TOL)
 
         self.jmp_n = c_jmp_n_opt if self.optimize_jumps else n_max_instr
-        self.jmp_instr = jmp_instr
+        self.jmp_instr = c_jmp_instr
 
 
     def cl_jmp_acc_pf(self, cl_jmp):
