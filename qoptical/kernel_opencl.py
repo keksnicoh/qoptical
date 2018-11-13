@@ -835,19 +835,35 @@ class OpenCLKernel():
         jmp_n = len(flat_jumps)
         jmp_n_max = max(len(_) for _ in jelem)
         jmp_instr = np.zeros((M, M, max(1, jmp_n_max)), dtype=self.__class__.DTYPE_JUMP_RAW)
-        jmp_n_opt = 0
         for (i, j) in [(i, j) for j in range(M) for i in range(M)]:
             l = len(jelem[idx(i, j)])
             jmp_instr[i, j, :l] = jelem[idx(i, j)]
-            jmp_n_opt = max(jmp_n_opt, len(set(jmp_instr[i, j, :l]['IDX'])))
+
+        # filter out non-contributing jumps
+        sidx = (-np.abs(jmp_instr['PF'])).argsort(axis=2)
+        s_jmp_instr = np.take_along_axis(jmp_instr, sidx, axis=2)
+        s, n_max_instr = s_jmp_instr.shape, 0
+        for a in s_jmp_instr.reshape((s[0] * s[1], s[2])):
+            n_instr = len(np.argwhere(np.abs(a['PF']) > QOP.COMPLEX_ZERO_TOL))
+            n_max_instr = max(n_max_instr, n_instr)
+        c_jmp_instr = s_jmp_instr[:,:,:n_max_instr]
+
+        # count contributions
+        jmp_n_opt, c_jmp_n_opt = 0, 0
+        for (i, j) in [(i, j) for j in range(M) for i in range(M)]:
+            l = len(jelem[idx(i, j)])
+            jmp_n_opt = max(jmp_n_opt, len(set(jmp_instr[i, j]['IDX'])))
+            c_jmp_n_opt = max(c_jmp_n_opt, len(set(c_jmp_instr[i, j]['IDX'])))
 
         if self.debug:
             msg = "prepared {} jumps. Require {} operations per work-item."
             print_debug(msg, jmp_n, jmp_n_max)
             msg = "the jumps can be optimized such that at most {} operations are required"
             print_debug(msg, jmp_n_opt)
+            msg = "... {} transitions have non-zero (>{}) contribution."
+            print_debug(msg, c_jmp_n_opt, QOP.COMPLEX_ZERO_TOL)
 
-        self.jmp_n = jmp_n_opt if self.optimize_jumps else jmp_n_max
+        self.jmp_n = c_jmp_n_opt if self.optimize_jumps else n_max_instr
         self.jmp_instr = jmp_instr
 
 

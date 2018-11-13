@@ -1,6 +1,8 @@
 # CHANGELOG
 
 ## 0.0
+- **2018-11-13**:
+    - optimized jumping buffer such that non-contributing jumps are removed.
 - **2018-10-30**:
     - GPU/CPU parallel execution in OpenCL Kernel
 - **2018-10-26**:

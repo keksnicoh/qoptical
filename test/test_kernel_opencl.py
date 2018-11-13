@@ -697,3 +697,21 @@ def test_three_level_T_driving():
     assert_allclose(rhof[1], resultr.state[1], **QOP.TEST_TOLS)
     assert_allclose(rhof[2], resultr.state[2], **QOP.TEST_TOLS)
 
+
+def test_dork():
+    """ three level system at finite temperature with
+        time dependent hamiltonian compared to reference
+        implementation.
+        """
+    h0 = np.diag([1,2,3,7,9,15,27,30,])
+    rs = ReducedSystem(h0)
+    kernel = OpenCLKernel(rs)
+    kernel.compile()
+    kernel.sync(state=rs.thermal_state(0), t_bath=1, y_0=1)
+
+    rs = ReducedSystem(h0).create_rs_dipole_ladder()
+    kernel = OpenCLKernel(rs)
+    kernel.compile()
+    kernel.sync(state=rs.thermal_state(0), t_bath=1, y_0=1)
+
+

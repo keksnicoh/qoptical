@@ -88,6 +88,7 @@ class ReducedSystem():
 
         return jumps
 
+
     def get_possible_tw(self):
         """ returns all possible transition frequencies
             bewteen the energy eigenstates of the system.
@@ -193,14 +194,17 @@ class ReducedSystem():
             for i in vectorize(i)
         )
 
+
     def op2eb(self, op):
         """ transforms `op` into eigenbase.
             `op` must be ndarray of shape `(M,M)` or `(N,M,M)`
             """
         return self.sarr @ op @ self.sarr.conj().T
 
+
     def eb2op(self, op):
         """ transforms `op` into eigenbase.
             `op` must be ndarray of shape `(M,M)` or `(N,M,M)`
             """
         return self.sarr.conj().T @ op @ self.sarr
+
