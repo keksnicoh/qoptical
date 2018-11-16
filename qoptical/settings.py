@@ -5,6 +5,12 @@
 import numpy as np
 import os
 
+DEFAULT_VALUES = {
+    'QOP_TOL_COMPLEX': 0.00001
+}
+
+envget_def = lambda k: os.environ.get(k, DEFAULT_VALUES[k])
+
 class QOP():
     DEBUG = os.environ.get('QOP_DEBUG', '0') == '1'
 
@@ -14,7 +20,7 @@ class QOP():
     T_INT = np.int32 if not DOUBLE_PRECISION else np.int32
     T_COMPLEX  = np.complex64 if not DOUBLE_PRECISION else np.complex128
     CLOSE_TOL = {'atol': 1e-5, 'rtol': 1e-7}
-    COMPLEX_ZERO_TOL = float(os.environ.get('QOP_TOL_COMPLEX', 1e-7))
+    COMPLEX_ZERO_TOL = float(envget_def('QOP_TOL_COMPLEX'))
     # the absolute and relative tolerance for two numbers to be equal.
     TEST_TOLS = {'atol': 1e-5, 'rtol': 1e-7}
 
