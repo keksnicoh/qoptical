@@ -5,12 +5,13 @@ from qoptical.opme import opmesolve
 from qoptical.hamilton import ReducedSystem
 from qoptical.kernel_qutip import QutipKernel
 from numpy.testing import assert_allclose
-from qoptical.kernel_opencl import OpenCLKernel
+from qoptical.kernel_opencl import OpenCLKernel, opmesolve_cl_expect
 from qoptical.util import ketbra, eigh
 from qoptical.settings import QOP
 import pyopencl as cl
 import pytest
 import numpy as np
+from qutip import *
 
 def test_von_neumann():
     """ integrate von Neumann equation to test the following:
@@ -714,4 +715,82 @@ def test_dork():
     kernel.compile()
     kernel.sync(state=rs.thermal_state(0), t_bath=1, y_0=1)
 
+
+def test_yt_hosci_qutip():
+    """
+    harmonic oscillator with time dependent damping
+    coefficient y(t) compared to qutip example.
+    """
+    dimH = 10
+    y, A, wl = 0.25, 0.75, 20
+
+    a = destroy(dimH)
+    H = a.dag() * a
+    psi0 = basis(dimH, 9)
+    yt_coeff = lambda t, a: np.sqrt(y) * (1 + A * np.sin(wl*t))
+    c_ops = [[a, yt_coeff]]
+    times = np.linspace(0, 1, 10000)
+
+    # qutip solve
+    output = mesolve(H, psi0, times, c_ops, [a.dag() * a])
+
+    # qoptical solve
+    result = opmesolve_cl_expect(
+        tg=(0, 1, .0001),
+        reduced_system=ReducedSystem(H.full(), dipole=(a + a.dag()).full()),
+        t_bath=0,
+        y_0=1,
+        rho0=(psi0 * psi0.dag()).full(),
+        Oexpect=(a.dag() * a).full(),
+        yt_coeff=yt_coeff,
+    )
+
+    # XXX
+    # - layout the result such that it is more compareable...
+    assert_allclose(output.expect[0][1:5], result[1:5,0], **QOP.TEST_TOLS)
+    assert_allclose(output.expect[0][-2], result[-1,0], **QOP.TEST_TOLS)
+    assert_allclose(output.expect[0][-3], result[-2,0], **QOP.TEST_TOLS)
+
+
+def test_yt_hosci_qutip_data_struct():
+    """
+    harmonic oscillator with time dependent damping
+    coefficient y(t) compared to qutip example.
+
+    here a numpy array is used to represent parametrization
+    """
+    dimH = 10
+    data = np.array([(0.25, 0.75, 20), ], dtype=np.dtype([
+        ('y', QOP.T_FLOAT),
+        ('A', QOP.T_FLOAT),
+        ('wl', QOP.T_FLOAT),
+    ]))
+
+    a = destroy(dimH)
+    H = a.dag() * a
+    psi0 = basis(dimH, 9)
+    yt_coeff = lambda t, arg: np.sqrt(arg['y']) * (1 + arg['A'] * np.sin(arg['wl'] * t))
+    c_ops = [[a, yt_coeff]]
+    times = np.linspace(0, 1, 10000)
+
+    # qutip solve
+    output = mesolve(H, psi0, times, c_ops, [a.dag() * a], args=data[0])
+
+    # qoptical solve
+    result = opmesolve_cl_expect(
+        tg=(0, 1, .0001),
+        reduced_system=ReducedSystem(H.full(), dipole=(a + a.dag()).full()),
+        t_bath=0,
+        y_0=1,
+        rho0=(psi0 * psi0.dag()).full(),
+        Oexpect=(a.dag() * a).full(),
+        yt_coeff=yt_coeff,
+        params=data
+    )
+
+    # XXX
+    # - layout the result such that it is more compareable...
+    assert_allclose(output.expect[0][1:5], result[1:5,0], **QOP.TEST_TOLS)
+    assert_allclose(output.expect[0][-2], result[-1,0], **QOP.TEST_TOLS)
+    assert_allclose(output.expect[0][-3], result[-2,0], **QOP.TEST_TOLS)
 

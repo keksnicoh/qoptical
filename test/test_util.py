@@ -101,5 +101,56 @@ def test_unvectorize(a, b):
     else:
         assert b == c
 
+def test_reshape_list_trivial():
+    result = reshape_list([], (1, 1, 1,))
+    assert isinstance(result, list)
+    assert len(result) == 0
 
+def test_reshape_list_single():
+    result = reshape_list(['a'], (1, 1, 1,))
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], list)
+    assert len(result[0]) == 1
+    assert isinstance(result[0][0], list)
+    assert len(result[0][0]) == 1
+    assert result[0][0][0] == 'a'
+
+def test_reshape_list():
+    data = [1, 2, 3, 4,
+            5, 6, 7, 8,
+
+            11, 22, 33, 44,
+            55, 66, 77, 88,]
+
+    result = reshape_list(data, (2, 2, 4))
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert isinstance(result[0], list)
+    assert len(result[0]) == 2
+
+    assert isinstance(result[0][0], list)
+    assert len(result[0][0]) == 4
+    assert np.all(data[0:4] == result[0][0])
+    assert isinstance(result[0][0], list)
+    assert len(result[0][1]) == 4
+    assert np.all(data[4:8] == result[0][1])
+
+    assert isinstance(result[1], list)
+    assert len(result[1]) == 2
+
+    assert isinstance(result[0][0], list)
+    assert len(result[1][0]) == 4
+    assert np.all(data[8:12] == result[1][0])
+    assert isinstance(result[0][0], list)
+    assert len(result[1][1]) == 4
+    assert np.all(data[12:16] == result[1][1])
+
+def test_reshape_list_invalid():
+    try:
+        reshape_list([1,2,3], (2, 2,))
+    except ValueError:
+        assert True
+        return
+    assert False
 

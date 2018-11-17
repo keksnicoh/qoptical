@@ -17,6 +17,20 @@ queue       = cl.CommandQueue(ctx)
 test_scalar_float = 1.3
 test_scalar_int   = 2
 
+def spawn_f1():
+    a = 5
+    b = np.pi
+    c = 3
+    return lambda t: a * b * t
+
+def spawn_nested_f2():
+    a = 5
+    def s():
+        b = 7
+        return lambda t: a * b * t + 4
+    return s()
+
+
 @pytest.mark.parametrize("f, domain", [
     [lambda t: 1.0, np.arange(-1, 1, 0.1),],
     [lambda t: 5*t, np.arange(-1, 1, 0.1),],
@@ -48,10 +62,16 @@ test_scalar_int   = 2
     [lambda t: np.sin(t)*2-1+3*np.cos(np.cos(t*t)), np.arange(-1, 1, 0.1),],
     # scalar from globals
     [lambda t: test_scalar_int * t / test_scalar_float, np.arange(-1, 1, 0.1),],
+    # functions spawned within another function
+    # (Instruction(opname='LOAD_DEREF', opcode=136, arg=0, argval='a', argrepr='a', offset=0, starts_line=22, is_jump_target=False))
+    [spawn_f1(), np.arange(-1, 1, 0.1),],
+    [spawn_nested_f2(), np.arange(-1, 1, 0.1),],
+    [lambda t: np.exp(-t), np.arange(-1, 1, 0.1),],
+    [lambda t: np.exp(+t), np.arange(-1, 1, 0.1),],
 ])
 def test_f2cl(f, domain):
     r_clf = f2cl.f2cl(f, "bork_from_ork")
-
+    print(r_clf)
     # compile
     try:
         prg = cl.Program(ctx, r_clf + """

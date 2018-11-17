@@ -1,6 +1,9 @@
 # CHANGELOG
 
 ## 0.0
+- **2018-11-17**:
+    - improved f2cl so that closures and +/- unary instructions work
+    - added time dependend damping y(t)
 - **2018-11-13**:
     - optimized jumping buffer such that non-contributing jumps are removed.
 - **2018-10-30**:

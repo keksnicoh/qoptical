@@ -14,7 +14,23 @@ def fmap_nested_list(f, lst):
     ]
 
 def reshape_list(lst, shape):
-    # XXXXXXX TEST & FINALIZE
+    """ reshapes a python list into a nested lists
+        of lists of a given shape
+
+        Arguments:
+        ----------
+
+        :lst: list to be reshaped
+
+        :shape: tuple shape
+
+        Returns:
+        --------
+
+        reshaped list
+
+        """
+
     if len(shape) == 1:
         return lst
 
@@ -22,8 +38,8 @@ def reshape_list(lst, shape):
 
     n = len(lst) / cs
     if not int(n) == n:
-        err = 'list of length {} canno be reshaped into {}'
-        raise ValueError(err.format(len(cfg), shape))
+        err = 'list of length {} cannot be reshaped into {}'
+        raise ValueError(err.format(len(lst), shape))
 
     return reshape_list(
         [lst[(i * cs):((i + 1) * cs)] for i in range(0, int(n))],

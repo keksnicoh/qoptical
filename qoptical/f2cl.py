@@ -26,6 +26,8 @@ T_VAL = 'T_VAL'
 T_BIN = 'T_BIN'
 T_RETURN = 'T_RETURN'
 T_DICT = 'T_DICT'
+T_DEREF = 'T_DEREF'
+T_UNARY_NEGATIVE = 'T_UNARY_NEGATIVE'
 
 GLOBALS_MAP = [
     (np.sin, 'sin'),
@@ -86,7 +88,7 @@ def f2cl(f, cl_fname, cl_param_type=None):
     if ctree[0] != T_RETURN:
         raise NotImplementedError('must be a function.')
 
-    r_expr = f2cl_expr(ctree[1], f.__globals__)
+    r_expr = f2cl_expr(ctree[1], f.__globals__, f.__closure__)
     r_fname = cl_fname
 
     if cl_param_type is not None:
@@ -150,12 +152,12 @@ BIN_MAP = {
     'BINARY_MODULO': '%',
 }
 
-def f2cl_expr(ctree, glb):
+def f2cl_expr(ctree, glb, closure):
     """ maps ctree to an expression
         """
     if ctree[0] == T_FUNC:
-        fname = f2cl_expr(ctree[1], glb)
-        return "{}({})".format(fname, ', '.join([f2cl_expr(c, glb) for c in ctree[2]]))
+        fname = f2cl_expr(ctree[1], glb, closure)
+        return "{}({})".format(fname, ', '.join([f2cl_expr(c, glb, closure) for c in ctree[2]]))
 
     if ctree[0] == T_SYMBOLE:
         if ctree[2] == 0:
@@ -186,16 +188,28 @@ def f2cl_expr(ctree, glb):
         elif not isinstance(ctree[2][1], str):
             msg = "only string subscription supported: {}[{}] given."
             raise NotImplementedError(msg.format(ctree[1], ctree[2]))
-        return "{}.{}".format(f2cl_expr(ctree[1], {}), ctree[2][1])
+        return "{}.{}".format(f2cl_expr(ctree[1], {}, closure), ctree[2][1])
 
     if ctree[0] == T_BIN:
         if ctree[1] in ['*', '+', '/', '-']:
             return "({} {} {})".format(
-                f2cl_expr(ctree[2][0], glb),
+                f2cl_expr(ctree[2][0], glb, closure),
                 ctree[1],
-                f2cl_expr(ctree[2][1], glb))
+                f2cl_expr(ctree[2][1], glb, closure))
         raise NotImplementedError()
 
+    if ctree[0] == T_DEREF:
+        val = closure[ctree[1]].cell_contents
+        if isinstance(val, (int, np.int)):
+            return r_clint(val)
+        if isinstance(val, (float, np.float, np.double)):
+            return r_clfloat(val)
+        if isinstance(val, str):
+            return "'{}'".format(val)
+        raise NotImplementedError(str(val))
+
+    if ctree[0] == T_UNARY_NEGATIVE:
+        return '-{}'.format(f2cl_expr(ctree[1], glb, closure))
 
     raise NotImplementedError(str(ctree))
 
@@ -297,6 +311,19 @@ def create_ctree(f):
                 raise RuntimeError('do not know how to deal with this?!')
             current = (T_RETURN, read[-1])
             read.append(current)
+
+        elif a.opname == 'LOAD_DEREF':
+            current = (T_DEREF, a.arg, a.argrepr)
+            read.append(current)
+
+        elif a.opname == 'UNARY_NEGATIVE':
+            current = (T_UNARY_NEGATIVE, read[-1])
+            read = read[:-1]
+            read.append(current)
+
+        elif a.opname == 'UNARY_POSITIVE':
+            # + has no affect so we ignore it.
+            pass
 
         else:
             raise RuntimeError('did not understand?! {}'.format(a))

@@ -21,6 +21,8 @@
 
 /*{ht_coeff}*/
 
+/*{yt_coeff}*/
+
 __kernel void opmesolve_rk4_eb(
     __global const $(cfloat_t) *hu,/*{arg_htl}*/
     __global const t_jump *jb,/*{arg_sysparam}*/

@@ -64,6 +64,7 @@ def opmesolve_cl_expect(tg,
                         y_0,
                         rho0,
                         Oexpect,
+                        yt_coeff=None,
                         OHul=None,
                         params=None,
                         rec_skip=1,
@@ -124,6 +125,10 @@ def opmesolve_cl_expect(tg,
                           ht_coeff=ht_coeff,
                           ctx=ctx,
                           queue=queue)
+
+    if yt_coeff is not None:
+        kernel.yt_coeff = yt_coeff
+
     kernel.compile()
 
     kernel.sync(state=rho0, t_bath=t_bath, y_0=y_0, sysparam=params, htl=ht_op)
@@ -217,6 +222,7 @@ class OpenCLKernel():
         # time dependent hamiltonian
         self.t_sysparam_name = None
         self.ht_coeff = ht_coeff
+        self.yt_coeff = None # time dependent global damping
 
         self.jmp_n = None # the number of jumping instructions due to dissipators
         self.jmp_instr = None # jumping instructions for all cells
@@ -266,7 +272,8 @@ class OpenCLKernel():
     def __del__(self):
         if self.debug:
             print_debug('release buffers')
-        self.b_hu.release()
+        if self.b_hu is not None:
+            self.b_hu.release()
         if self.b_htl is not None:
             for b_ht in self.b_htl:
                 b_ht.release()
@@ -321,6 +328,8 @@ class OpenCLKernel():
         tpl_coeff = ""
         r_local_coeff = ""
         r_sysp = ""
+        # coeff y(t)
+        r_yt_coeff = ""
         # macro to refresh the value of time dependent
         # hamilton at a specific time.
         r_htl = ""
@@ -362,10 +371,17 @@ class OpenCLKernel():
             self.t_sysparam_name = "t_sysparam"
             r_arg_sysparam = "\n    __global const t_sysparam *sysparam,"
 
+
+        # ---- DYNAMIC DAMPING
+
+        if self.yt_coeff is not None:
+            rtype = "t_sysparam" if self.t_sysparam is not None else None
+            r_yt_coeff = f2cl(self.yt_coeff, "ytcoeff", rtype)
+
         # ---- DYNAMIC HAMILTON
         n_htl = 0
         r_htl = '#define HTL()\\\n   _hu[__item] = _h0[__item];'
-        if self.ht_coeff is not None:
+        if self.ht_coeff is not None and len(self.ht_coeff) > 0:
             n_htl = len(self.ht_coeff)
             # compile coefficient function to OpenCL
             r_cl_coeff = "\n".join(
@@ -390,15 +406,32 @@ class OpenCLKernel():
             r_arg_htl = '\n    ' \
                       + '\n    '.join(cx.format(i=i) for i in range(n_htl))
 
-            coeffx = "coeff[{i}] = htcoeff{i}(/*{{t}}*/, sysp);"
-            tpl_coeff = ''
+        tpl_coeff = ""
+        if self.yt_coeff or self.ht_coeff is not None:
+            r_coeff = []
+            if self.yt_coeff is not None:
+                if self.t_sysparam is not None:
+                    r_coeff += ["ytc = pow(ytcoeff(/*{t}*/, sysp), 2);"]
+                else:
+                    r_coeff += ["ytc = pow(ytcoeff(/*{t}*/), 2);"]
+
+            if self.ht_coeff is not None and len(self.ht_coeff) > 0:
+                coeffx = "coeff[{i}] = htcoeff{i}(/*{{t}}*/, sysp);"
+                r_coeff += [coeffx.format(i=i) for i in range(n_htl)]
+
             tpl_coeff = '\n/*{s}*/if (isfirst) {'\
                       + '\n/*{s}*/    '\
-                      + '\n/*{s}*/    '.join(coeffx.format(i=i) for i in range(n_htl))\
+                      + '\n/*{s}*/    '.join(r_coeff)\
                       + '\n/*{s}*/}'
-            r_local_coeff = "__local $(float) coeff[{}];\n".format(n_htl)\
-                          + "    __local t_sysparam sysp;"
-            r_sysp = "\n        sysp = sysparam[GID];"
+
+            r_local_coeff = "\n"
+            if self.t_sysparam is not None:
+                r_sysp = "\n        sysp = sysparam[GID];"
+                r_local_coeff += "    __local t_sysparam sysp;\n"
+            if self.ht_coeff is not None and len(self.ht_coeff) > 0:
+                r_local_coeff += "    __local $(float) coeff[{}];\n".format(n_htl)
+            if self.yt_coeff is not None:
+                r_local_coeff += "    __local $(float) ytc;\n"
 
         # -- MAIN MAKRO
 
@@ -414,9 +447,16 @@ class OpenCLKernel():
         cx_unitary = ("K = $(cfloat_add)(K, $(cfloat_mul)(ihbar, "
                       "$(cfloat_sub)($(cfloat_mul)(HU(__idx, {i}), R({i}, __idy)), "
                       "$(cfloat_mul)(HU({i}, __idy), R(__idx, {i})))));")
-        cx_jump = ("K = $(cfloat_add)(K, $(cfloat_mul)"
-                   "(jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].PF, "
-                   "_rky[jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].IDX]));")
+
+        if self.yt_coeff is not None:
+            cx_jump = ("K = $(cfloat_add)(K, $(cfloat_mul)"
+                       "($(cfloat_rmul)(ytc, jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].PF), "
+                       "_rky[jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].IDX]));")
+        else:
+            cx_jump = ("K = $(cfloat_add)(K, $(cfloat_mul)"
+                       "(jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].PF, "
+                       "_rky[jb[GID * N_JUMP * IN_BLOCK_SIZE + N_JUMP * __item+{i}].IDX]));")
+
         r_define_rk = '\\\n    '.join(
             [cx_unitary.format(i=r_clint(i)) for i in range(M)]
             + [cx_jump.format(i=r_clint(i)) for i in range(self.jmp_n)])
@@ -465,6 +505,7 @@ class OpenCLKernel():
                                arg_htl=r_arg_htl,
                                arg_debug=r_arg_debug,
                                debug_hook_1=r_debug_hook_1,
+                               yt_coeff=r_yt_coeff,
                                tl=r_tl)
 
         if self.debug:
@@ -517,7 +558,9 @@ class OpenCLKernel():
             if self.debug:
                 print_debug('compute jumping structure...')
             self.h_cl_jmp = self.create_h_cl_jmp()
-            self.b_cl_jmp = self.arr_to_buf(self.h_cl_jmp, readonly=True)
+            self.b_cl_jmp = None
+            if self.h_cl_jmp.shape[-1] > 0:
+                self.b_cl_jmp = self.arr_to_buf(self.h_cl_jmp, readonly=True)
 
         # XXX
         if htl is not None:
