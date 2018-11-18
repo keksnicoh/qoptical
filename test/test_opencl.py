@@ -28,8 +28,8 @@ def test_gpu():
     # create two buffers with 50k random numbers
     # (from pyopencl getting started tutorial)
     # src: https://documen.tician.de/pyopencl/
-    a_np = np.random.rand(50000).astype(np.float32)
-    b_np = np.random.rand(50000).astype(np.float32)
+    a_np = np.random.rand(5000).astype(np.float32)
+    b_np = np.random.rand(5000).astype(np.float32)
     mf = cl.mem_flags
     a_g = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=a_np)
     b_g = cl.Buffer(ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=b_np)
