@@ -377,6 +377,9 @@ class OpenCLKernel():
         if self.yt_coeff is not None:
             rtype = "t_sysparam" if self.t_sysparam is not None else None
             r_yt_coeff = f2cl(self.yt_coeff, "ytcoeff", rtype)
+            if self.debug:
+                msg = "gonna compile y(t) coefficient function."
+                print_debug(msg)
 
         # ---- DYNAMIC HAMILTON
         n_htl = 0
