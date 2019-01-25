@@ -1,6 +1,8 @@
 # CHANGELOG
 
 ## 0.0
+- **2019-01-20**:
+    - added custom kappa function support in OpenCL integrator
 - **2018-11-17**:
     - improved f2cl so that closures and +/- unary instructions work
     - added time dependend damping y(t)

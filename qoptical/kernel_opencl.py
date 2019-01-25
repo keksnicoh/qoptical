@@ -68,6 +68,7 @@ def opmesolve_cl_expect(tg,
                         OHul=None,
                         params=None,
                         rec_skip=1,
+                        kappa=None,
                         ctx=None,
                         queue=None,
                         steps_chunk_size=None):
@@ -126,6 +127,9 @@ def opmesolve_cl_expect(tg,
                           ctx=ctx,
                           queue=queue)
 
+    if kappa is not None:
+        kernel.kappa = kappa
+
     if yt_coeff is not None:
         kernel.yt_coeff = yt_coeff
 
@@ -147,6 +151,12 @@ def opmesolve_cl_expect(tg,
     return result
 
 
+def kappa(T, p, w):
+    if T == 0:
+        return w ** 3 * np.heaviside(w, 0)
+    return w**3 * (1.0 + 1.0 / (np.exp(1.0 / T * w) - 1 + 0.0000000001))
+
+
 class OpenCLKernel():
     """ Renders & compiles an OpenCL GPU kernel to
         integrate Quantum Optical Master Eqaution.
@@ -162,9 +172,8 @@ class OpenCLKernel():
     # contribution of a matrix element into the work-item.
     # (See `cl_jmp_acc_pf`)
     DTYPE_JUMP_RAW = np.dtype([
-        ('IDX', QOP.T_INT),     # source idx
+        ('IDX', QOP.T_INT),    # source idx
         ('PF', QOP.T_COMPLEX), # prefactor (dipole)
-        ('SE', QOP.T_INT),      # sponanious emission (1 or 0)
         ('W', QOP.T_FLOAT),    # transition frequency
     ])
 
@@ -234,6 +243,7 @@ class OpenCLKernel():
         self.y_0 = None
         self.htl = None
         self.sysparam = None
+        self.kappa = kappa
 
         # host buffers and gpu buffers
         self.h_sysparam = None
@@ -817,15 +827,13 @@ class OpenCLKernel():
     def create_h_cl_jmp(self):
         """ create cl_jmp host buffer """
         N = self.h_state.shape[0]
-        dst = [boson_stat(t) for t in self.h_t_bath]
-
         cl_jmp = np.zeros((N, *self.jmp_instr.shape), dtype=self.__class__.DTYPE_T_JMP)
         for i in range(len(self.h_state)):
+            p = self.h_sysparam[i] if self.h_sysparam is not None else {}
             cl_jmp[i]['IDX'] = self.jmp_instr['IDX']
-            cl_jmp[i]['PF'] = self.h_y_0[i] \
-                            * self.jmp_instr['PF'] \
-                            * self.jmp_instr['W']**3 \
-                            * (self.jmp_instr['SE'] + dst[i](self.jmp_instr['W']))
+            cl_jmp[i]['PF']  = self.h_y_0[i] \
+                             * self.jmp_instr['PF'] \
+                             * self.kappa(self.h_t_bath[i], p, self.jmp_instr['W'])
 
         if self.jmp_n == 0 or not self.optimize_jumps:
             return cl_jmp
@@ -852,30 +860,30 @@ class OpenCLKernel():
                      jump[np.where(jump['I'][:, 0] == j)[0]]
             for j1, j2 in itertools.product(jx, jy):
                 fidx = idx(j1['I'][1], j2['I'][1])
-                jelem[tidx].append((fidx, j1['d'] * j2['d'].conj(), 1, j1['w'])) # A rho Ad
-                jelem[fidx].append((tidx, j1['d'].conj() * j2['d'], 0, j1['w'])) # Ad rho A
+                jelem[tidx].append((fidx, j1['d'] * j2['d'].conj(), j1['w'])) # A rho Ad
+                jelem[fidx].append((tidx, j1['d'].conj() * j2['d'], -j1['w'])) # Ad rho A
             # -1/2 {rho, Ad A}
             jy = jump[np.where(jump['I'][:, 1] == j)[0]]
             for j2 in jy:
                 for j1 in jump[np.where(jump['I'][:, 0] == j2['I'][0])[0]]:
                     fidx = idx(i, j1['I'][1])
-                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 1, j1['w']))
+                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], j1['w']))
             jx = jump[np.where(jump['I'][:, 1] == i)[0]]
             for j1 in jx:
                 for j2 in jump[np.where(jump['I'][:, 0] == j1['I'][0])[0]]:
                     fidx = idx(j2['I'][1], j)
-                    jelem[tidx].append((fidx, -0.5 * j1['d'] * j2['d'].conj(), 1, j1['w']))
+                    jelem[tidx].append((fidx, -0.5 * j1['d'] * j2['d'].conj(), j1['w']))
             # -1/2 {rho, A Ad}
             jx = jump[np.where(jump['I'][:, 0] == i)[0]]
             for j1 in jx:
                 for j2 in jump[np.where(jump['I'][:, 1] == j1['I'][1])[0]]:
                     fidx = idx(j2['I'][0], j)
-                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 0, j1['w']))
+                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], -j1['w']))
             jy = jump[np.where(jump['I'][:, 0] == j)[0]]
             for j2 in jy:
                 for j1 in jump[np.where(jump['I'][:, 1] == j2['I'][1])[0]]:
                     fidx = idx(i, j1['I'][0])
-                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], 0, j1['w']))
+                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], -j1['w']))
 
         # structurize the data as (M, M, n_max_jump) numpy array
         jmp_n = len(flat_jumps)
