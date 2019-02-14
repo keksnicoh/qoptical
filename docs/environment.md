@@ -35,3 +35,11 @@ export QOP_DOUBLE_PRECISION=1
 ```
 
 ***XXX*** Not fully implemented yet.
+
+## QOP_ECHO_COMPILED_KERNEL
+
+echo compiled OpenCL kernel after compilation
+
+```bash
+export QOP_ECHO_COMPILED_KERNEL=1
+```

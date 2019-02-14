@@ -16,6 +16,7 @@ class QOP():
 
     # precision section
     DOUBLE_PRECISION = os.environ.get('QOP_DOUBLE_PRECISION', '0') == '1'
+    ECHO_COMPILED_KERNEL = os.environ.get('QOP_ECHO_COMPILED_KERNEL', '0') == '1'
     T_FLOAT = np.float32 if not DOUBLE_PRECISION else np.float64
     T_INT = np.int32 if not DOUBLE_PRECISION else np.int32
     T_COMPLEX  = np.complex64 if not DOUBLE_PRECISION else np.complex128

@@ -527,6 +527,9 @@ class OpenCLKernel():
                 self.c_kernel.count("\n") + 1
             )
 
+        if QOP.ECHO_COMPILED_KERNEL:
+            print(self.c_kernel)
+
         self.prg = cl.Program(self.ctx, self.c_kernel).build()
 
 
