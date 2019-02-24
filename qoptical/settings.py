@@ -13,8 +13,6 @@ envget_def = lambda k: os.environ.get(k, DEFAULT_VALUES[k])
 
 class QOP():
     DEBUG = os.environ.get('QOP_DEBUG', '0') == '1'
-
-    # precision section
     DOUBLE_PRECISION = os.environ.get('QOP_DOUBLE_PRECISION', '0') == '1'
     ECHO_COMPILED_KERNEL = os.environ.get('QOP_ECHO_COMPILED_KERNEL', '0') == '1'
     T_FLOAT = np.float32 if not DOUBLE_PRECISION else np.float64
@@ -22,7 +20,6 @@ class QOP():
     T_COMPLEX  = np.complex64 if not DOUBLE_PRECISION else np.complex128
     CLOSE_TOL = {'atol': 1e-5, 'rtol': 1e-7}
     COMPLEX_ZERO_TOL = float(envget_def('QOP_TOL_COMPLEX'))
-    # the absolute and relative tolerance for two numbers to be equal.
     TEST_TOLS = {'atol': 1e-5, 'rtol': 1e-7}
 
 def print_debug(msg, *args, **kwargs):

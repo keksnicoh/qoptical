@@ -71,7 +71,7 @@ def spawn_nested_f2():
 ])
 def test_f2cl(f, domain):
     r_clf = f2cl.f2cl(f, "bork_from_ork")
-    print(r_clf)
+
     # compile
     try:
         prg = cl.Program(ctx, r_clf + """
