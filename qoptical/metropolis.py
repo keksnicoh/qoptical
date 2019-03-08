@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-quantum optimal control
+Metropolis Algorithm util
 
 :author: keksnicoh
 """
@@ -36,25 +36,6 @@ def mc_param(p0, p_forb=None, keymap={}, rand=np.random.rand):
     :p_forb: (dimP, ) shaped arr of forbidden values
 
         if None then p0['p'] is used instead
-
-        this argument allows to avoid going back in the
-        parameterpace.
-
-                      |
-          |     1/3   |   1/3
-        --.-----------.------.....
-          |           |
-          |           |
-          | 1/3       | 1
-          |           |
-        --.-----------X.....
-          |   1/3     |
-
-
-        likelyhood of going back in a dimP=2 parameterspace
-        after starting from X in any direction:
-
-            1 * (1/3)^3 * 2 = 2 / 27
 
     :keymap: optional, in case of RuntimeError this dict
         might be used to label field by index
@@ -127,16 +108,69 @@ def arg_discard(dx, beta=0, rand=np.random.rand):
 
     a new (dimP, xxx) shaped arr of parameters
     """
-
-    discard_idx = np.argwhere(dx > 0)[..., 0]
-    th_weight   = np.exp(-(beta * dx)[discard_idx])
-    ddidx       = np.argwhere(th_weight >= rand(*th_weight.shape))
-    return discard_idx[ddidx]
+    if np.isinf(beta):
+        return np.argwhere(dx >= 0)
+    return np.argwhere(np.exp(-(beta * dx)) <= rand(*dx.shape))
 
 
-def zero_parameters(n, fields):
+def zero_param(n, fields):
     km = dict(zip(fields, range(len(fields))))
     return km, np.zeros((n, len(fields)), dtype=P_DTYPE)
+
+
+def step(
+    func,
+    p0,
+    x0=None,
+    beta=np.inf, 
+    rand=np.random.rand,
+    optimize=Optimize.MAXIMIZE,
+    n_mc_param=1,
+):
+    """
+    metropolis step higher order function
+
+    Arguments:
+    ----------
+
+    :func: function which received the current parameters `p0`
+
+    :p0: parameters
+
+    :x0: value at `p0`
+
+    :beta: fluctuating parameter
+
+    :rand: random gen
+
+    :optimize: optimize or minimize
+
+    :n_mc_param: how many times the `mc_param` should be
+        applied to `p0`
+
+    Returns:
+    --------
+
+    tuple `(p1, x1)`
+
+    """
+
+    p1 = mc_param(p0, rand=rand)
+    for i in range(n_mc_param - 1):
+        p1 = mc_param(p1, rand=rand)
+
+    x1 = func(p1)
+
+    if x0 is not None:
+        didx = arg_discard(
+            dx=optimize.value * (x0 - x1),
+            beta=beta,
+            rand=rand
+        )
+
+        x1[didx], p1[didx] = x0[didx], p0[didx]
+
+    return p1, x1
 
 
 def arg_eps(p, eps, tol=0.000001):
@@ -190,30 +224,38 @@ def arg_eps(p, eps, tol=0.000001):
     return arg
 
 
-class OptimalControl():
+class MetropolisMC():
 
-    def __init__(self, fields, beta=0, rand=None, optimize=None, tol=0.000001):
+    def __init__(self, km, beta=0, func=None, rand=None, optimize=None, tol=0.000001):
         """
 
         """
-        self.beta     = beta
-        self.optimize = optimize or Optimize.MAXIMIZE
-        self.rand     = rand or np.random.rand
-        self.fields   = fields
-        self.keymap   = dict(zip(fields, range(len(fields))))
-        self.tol      = tol
+        self.beta       = beta
+        self.func       = func
+        self.optimize   = optimize or Optimize.MAXIMIZE
+        self.rand       = rand or np.random.rand
+        self.km         = km
+        self.tol        = tol
+        self.n_mc_param = 2
 
 
-    def zero_parameters(self, n):
+    def zero_param(self, n, dp=None, p0=None, p1=None):
         """
+
         initializes parameters
 
         Arguments:
         ----------
 
-        :n: number of parameters to be spawnd
+        :n: number of parameters to be spawned
 
         :fields: arr of field, implies dimension of parameterspace
+
+        :dp: initial dp
+
+        :p0: initial p0
+
+        :p1: initial p1
 
         Returns:
         --------
@@ -221,11 +263,48 @@ class OptimalControl():
         tuple of keymap and ndarray
 
         """
-        return np.zeros((n, len(self.fields)), dtype=P_DTYPE)
+        p = np.zeros((n, len(self.km)), dtype=P_DTYPE)
+
+        if dp is not None:
+            p['dp'] = dp
+
+        if p0 is not None:
+            p['p0'] = p0
+
+        if p1 is not None:
+            p['p1'] = p1
+
+        # if boundaries are set then set p to random value
+        # in between those.
+        if p0 is not None and p1 is not None:
+            return self.rand_param(p)
+
+        return p
 
 
-    def mc_param(self, p0, p_forb=None):
+    def rand_param(self, p):
         """
+        takes parameters and randomizes them
+
+        Arguments:
+        ----------
+
+        :p: parameters to be randomized
+
+        Returns:
+        --------
+
+        randomize parameters
+
+        """
+        pr = np.array(p, copy=True)
+        pr['p'] = p['p0'] + self.rand(*p.shape) * (p['p1'] - p['p0'])
+        return pr
+
+
+    def mc_param(self, p0, p_forb=None, n_mc_param=None):
+        """
+
         modifies a random component of a np.ndarray of parameters
         by given `dp` and random sign.
 
@@ -243,15 +322,28 @@ class OptimalControl():
 
         """
 
-        return mc_param(
-            p0=p0,
-            p_forb=p_forb,
-            keymap=self.keymap,
-            rand=self.rand
-        )
+        for i in range(n_mc_param or self.n_mc_param):
+            p0 = mc_param(
+                p0=p0,
+                p_forb=p_forb,
+                keymap=self.km,
+                rand=self.rand
+            )
 
-    def run(self, p):
-        pass
+        return p0
+
+
+    def step(self, p0, x0=None, n_mc_param=None):
+
+        return step(
+            func=self.func,
+            p0=p0,
+            x0=x0,
+            beta=self.beta,
+            rand=self.rand,
+            optimize=self.optimize,
+            n_mc_param=n_mc_param or self.n_mc_param,
+        )
 
 
     def arg_discard(self, x0, x1):
