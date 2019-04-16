@@ -62,6 +62,7 @@ class ReducedSystem():
         self.ev, self.s = eigh(h0)
         self.sarr = np.array(self.s)
         self.dimH = self.h0.shape[0]
+        self.tw = None
 
 
     def create_rs_dipole_ladder(self):
@@ -93,6 +94,8 @@ class ReducedSystem():
         """ returns all possible transition frequencies
             bewteen the energy eigenstates of the system.
         """
+        if self.tw is not None:
+            return self.tw
         ev = self.ev
         f = np.array([np.abs(a - b) for a in ev for b in ev if not np.isclose(a, b)])
         return sorted(f[~(np.triu(np.abs(f[:, None] - f) <= settings.EQ_COMPARE_TOL, 1)).any(0)])

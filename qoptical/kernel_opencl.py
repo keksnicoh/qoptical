@@ -127,6 +127,10 @@ def opmesolve_cl_expect(tg,
                           ctx=ctx,
                           queue=queue)
 
+    # normalize rho shape (dimH, dimH) -> (1, dimH, dimH)
+    if len(rho0.shape) == 2 and rho0.shape[0] == rho0.shape[1]:
+        rho0 = rho0.reshape((1, *rho0.shape))
+
     if kappa is not None:
         kernel.kappa = kappa
 
@@ -135,12 +139,16 @@ def opmesolve_cl_expect(tg,
 
     kernel.compile()
 
+    # upload state
     kernel.sync(state=rho0, t_bath=t_bath, y_0=y_0, sysparam=params, htl=ht_op)
 
     # result reader / expectation value
     tlist = np.arange(*tg)[::rec_skip]
     result = np.zeros((len(tlist), kernel.N), dtype=np.complex64)
     Oeb = kernel.system.op2eb(Oexpect)
+
+    # t=0
+    result[0] = np.trace(rho0 @ Oexpect, axis1=1, axis2=2)
 
     # run
     for idx, tlist, rho_eb in kernel.run(tg, steps_chunk_size=steps_chunk_size or 1e4):
@@ -398,7 +406,7 @@ class OpenCLKernel():
             n_htl = len(self.ht_coeff)
             # compile coefficient function to OpenCL
             r_cl_coeff = "\n".join(
-                f2cl(f, "htcoeff{}".format(i), "t_sysparam")
+                f2cl(f, "htcoeff{}".format(i), "t_sysparam" if self.t_sysparam is not None else None)
                 for (i, f) in enumerate(self.ht_coeff))
 
             # render HTL makro contributions due to H(T)
@@ -429,7 +437,10 @@ class OpenCLKernel():
                     r_coeff += ["ytc = pow(ytcoeff(/*{t}*/), 2);"]
 
             if self.ht_coeff is not None and len(self.ht_coeff) > 0:
-                coeffx = "coeff[{i}] = htcoeff{i}(/*{{t}}*/, sysp);"
+                if self.t_sysparam is not None:
+                    coeffx = "coeff[{i}] = htcoeff{i}(/*{{t}}*/, sysp);"
+                else:
+                    coeffx = "coeff[{i}] = htcoeff{i}(/*{{t}}*/);"
                 r_coeff += [coeffx.format(i=i) for i in range(n_htl)]
 
             tpl_coeff = '\n/*{s}*/if (isfirst) {'\

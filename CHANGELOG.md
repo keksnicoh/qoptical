@@ -1,6 +1,8 @@
 # CHANGELOG
 
 ## 0.0
+- **2019-04-16**:
+    - fixed bug for dynamic coefficient function when no sysparams where defined.
 - **2019-01-20**:
     - added custom kappa function support in OpenCL integrator
 - **2018-11-17**:
