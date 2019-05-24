@@ -1037,9 +1037,10 @@ class OpenCLKernel():
         """ compiles a `dtype` to c-struct with `name`.
             """
         _, c_decl = cl.tools.match_dtype_to_c_struct(
-            self.ctx.devices[0],
-            name,
-            dtype
+            device=self.ctx.devices[0],
+            name=name,
+            dtype=dtype,
+            context=self.ctx,
         )
         return c_decl
 

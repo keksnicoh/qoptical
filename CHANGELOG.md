@@ -1,6 +1,8 @@
 # CHANGELOG
 
 ## 0.0
+- **2019-05-24**:
+    - fixed usage of `cl.tools.match_dtype_to_c_struct` such that the current context is passed.
 - **2019-05-01**:
     - added DISSIPATOR_DISABLE_JUMP_TERM, DISSIPATOR_DISABLE_ACOMM_TERM flags
 - **2019-04-16**:
