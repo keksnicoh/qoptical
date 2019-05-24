@@ -1,6 +1,8 @@
 # CHANGELOG
 
 ## 0.0
+- **2019-05-01**:
+    - added DISSIPATOR_DISABLE_JUMP_TERM, DISSIPATOR_DISABLE_ACOMM_TERM flags
 - **2019-04-16**:
     - fixed bug for dynamic coefficient function when no sysparams where defined.
 - **2019-01-20**:

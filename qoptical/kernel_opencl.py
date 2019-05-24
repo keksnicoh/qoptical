@@ -47,6 +47,7 @@ import os
 import sys
 from time import time
 import itertools
+from enum import Flag, auto
 import numpy as np
 import pyopencl as cl
 import pyopencl.tools
@@ -71,7 +72,8 @@ def opmesolve_cl_expect(tg,
                         kappa=None,
                         ctx=None,
                         queue=None,
-                        steps_chunk_size=None):
+                        steps_chunk_size=None,
+                        flags=None):
     """ evolves expectation value on time gatte `tr`.
 
         Parameters:
@@ -137,6 +139,9 @@ def opmesolve_cl_expect(tg,
     if yt_coeff is not None:
         kernel.yt_coeff = yt_coeff
 
+    if flags is not None:
+        kernel.flags = flags
+
     kernel.compile()
 
     # upload state
@@ -160,9 +165,31 @@ def opmesolve_cl_expect(tg,
 
 
 def kappa(T, p, w):
+
     if T == 0:
         return w ** 3 * np.heaviside(w, 0)
+
     return w**3 * (1.0 + 1.0 / (np.exp(1.0 / T * w) - 1 + 0.0000000001))
+
+
+class OpenCLKernelFlag(Flag):
+
+    """
+    empty value
+    """
+    NONE = 0
+
+    """
+    disables the contribution from the $A \\rho A^\\dagger$
+    term within the lindblad dissipators.
+    """
+    DISSIPATOR_DISABLE_JUMP_TERM = auto()
+
+    """
+    disables the contribution from the $\\{A^\\dagger, \\rho A\\}$
+    term within the lindblad dissipators.
+    """
+    DISSIPATOR_DISABLE_ACOMM_TERM = auto()
 
 
 class OpenCLKernel():
@@ -211,6 +238,7 @@ class OpenCLKernel():
         self.ctx = ctx or _ctx()
         self.queue = queue or cl.CommandQueue(self.ctx)
         self.debug = debug or QOP.DEBUG
+        self.flags = OpenCLKernelFlag.NONE
 
         self._mb = None # base transformation matrix
 
@@ -220,8 +248,7 @@ class OpenCLKernel():
                                   # where M is dimH
 
         # -- debug members
-        # debug_hook_1 is rendered at the end of the loop just
-        # before time inc.
+        # debug_hook_1 is rendered at the end of the loop just before time inc.
         self.c_debug_hook_1 = None
         # extra buffer configuration,
         #
@@ -743,9 +770,13 @@ class OpenCLKernel():
 
 
     def normalize_vectors(self, vector_names):
-        vectors = [(name, getattr(self, name))
-                   for name in vector_names
-                   if getattr(self, name) is not None]
+
+        vectors = [
+            (name, getattr(self, name))
+            for name in vector_names
+            if getattr(self, name) is not None
+        ]
+
         vlens = set(v[1].shape[0] for v in vectors)
         if len(vlens) > 2:
             raise InconsistentVectorSizeError("too many different vector dimensions", vectors)
@@ -868,36 +899,62 @@ class OpenCLKernel():
         flat_jumps = self.get_flat_jumps()
         all_idx = [(i, j) for i in range(M) for j in range(M)]
 
+        # A(w) != 0
+        AwL = [
+            Aw for Aw in flat_jumps
+            if len(np.where(np.abs(Aw['d']) > QOP.COMPLEX_ZERO_TOL)[0])
+        ]
+
+        if self.debug:
+            print_debug('optimize the following dissipators:')
+            for Aw in AwL:
+                print_debug('A(ω={})'.format(Aw[0]['w']))
+                for Awt in Aw[np.where(np.abs(Aw['d']) > QOP.COMPLEX_ZERO_TOL)]:
+                    print_debug(" * <{}|d|{}> = {}".format(*Awt['I'], Awt['d']))
+            if OpenCLKernelFlag.DISSIPATOR_DISABLE_JUMP_TERM in self.flags:
+                print_debug("DISSIPATOR_DISABLE_JUMP_TERM: skip lindblad jump terms")
+            if OpenCLKernelFlag.DISSIPATOR_DISABLE_ACOMM_TERM in self.flags:
+                print_debug("DISSIPATOR_DISABLE_ACOMM_TERM: skip lindblad anticommutator terms")
+
+        # Lindblad terms
         for ((i, j), jump) in itertools.product(all_idx, flat_jumps):
             tidx = idx(i, j)
             jx, jy = jump[np.where(jump['I'][:, 0] == i)[0]], \
                      jump[np.where(jump['I'][:, 0] == j)[0]]
-            for j1, j2 in itertools.product(jx, jy):
-                fidx = idx(j1['I'][1], j2['I'][1])
-                jelem[tidx].append((fidx, j1['d'] * j2['d'].conj(), j1['w'])) # A rho Ad
-                jelem[fidx].append((tidx, j1['d'].conj() * j2['d'], -j1['w'])) # Ad rho A
-            # -1/2 {rho, Ad A}
-            jy = jump[np.where(jump['I'][:, 1] == j)[0]]
-            for j2 in jy:
-                for j1 in jump[np.where(jump['I'][:, 0] == j2['I'][0])[0]]:
-                    fidx = idx(i, j1['I'][1])
-                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], j1['w']))
-            jx = jump[np.where(jump['I'][:, 1] == i)[0]]
-            for j1 in jx:
-                for j2 in jump[np.where(jump['I'][:, 0] == j1['I'][0])[0]]:
-                    fidx = idx(j2['I'][1], j)
-                    jelem[tidx].append((fidx, -0.5 * j1['d'] * j2['d'].conj(), j1['w']))
-            # -1/2 {rho, A Ad}
-            jx = jump[np.where(jump['I'][:, 0] == i)[0]]
-            for j1 in jx:
-                for j2 in jump[np.where(jump['I'][:, 1] == j1['I'][1])[0]]:
-                    fidx = idx(j2['I'][0], j)
-                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], -j1['w']))
-            jy = jump[np.where(jump['I'][:, 0] == j)[0]]
-            for j2 in jy:
-                for j1 in jump[np.where(jump['I'][:, 1] == j2['I'][1])[0]]:
-                    fidx = idx(i, j1['I'][0])
-                    jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], -j1['w']))
+
+            # jump terms
+            if not OpenCLKernelFlag.DISSIPATOR_DISABLE_JUMP_TERM in self.flags:
+                for j1, j2 in itertools.product(jx, jy):
+                    fidx = idx(j1['I'][1], j2['I'][1])
+                    jelem[tidx].append((fidx, j1['d'] * j2['d'].conj(), j1['w'])) # A rho Ad
+                    jelem[fidx].append((tidx, j1['d'].conj() * j2['d'], -j1['w'])) # Ad rho A
+
+            # anti commutator terms
+            if not OpenCLKernelFlag.DISSIPATOR_DISABLE_ACOMM_TERM in self.flags:
+
+                # -1/2 {rho, Ad A}
+                jy = jump[np.where(jump['I'][:, 1] == j)[0]]
+                for j2 in jy:
+                    for j1 in jump[np.where(jump['I'][:, 0] == j2['I'][0])[0]]:
+                        fidx = idx(i, j1['I'][1])
+                        jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], j1['w']))
+                jx = jump[np.where(jump['I'][:, 1] == i)[0]]
+                for j1 in jx:
+                    for j2 in jump[np.where(jump['I'][:, 0] == j1['I'][0])[0]]:
+                        fidx = idx(j2['I'][1], j)
+                        jelem[tidx].append((fidx, -0.5 * j1['d'] * j2['d'].conj(), j1['w']))
+
+                # -1/2 {rho, A Ad}
+                jx = jump[np.where(jump['I'][:, 0] == i)[0]]
+                for j1 in jx:
+                    for j2 in jump[np.where(jump['I'][:, 1] == j1['I'][1])[0]]:
+                        fidx = idx(j2['I'][0], j)
+                        jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], -j1['w']))
+                jy = jump[np.where(jump['I'][:, 0] == j)[0]]
+                for j2 in jy:
+                    for j1 in jump[np.where(jump['I'][:, 1] == j2['I'][1])[0]]:
+                        fidx = idx(i, j1['I'][0])
+                        jelem[tidx].append((fidx, -0.5 * j1['d'].conj() * j2['d'], -j1['w']))
 
         # structurize the data as (M, M, n_max_jump) numpy array
         jmp_n = len(flat_jumps)
@@ -910,6 +967,7 @@ class OpenCLKernel():
         # filter out non-contributing jumps
         sidx = (-np.abs(jmp_instr['PF'])).argsort(axis=2)
         s_jmp_instr = np.take_along_axis(jmp_instr, sidx, axis=2)
+
         s, n_max_instr = s_jmp_instr.shape, 0
         for a in s_jmp_instr.reshape((s[0] * s[1], s[2])):
             n_instr = len(np.argwhere(np.abs(a['PF']) > QOP.COMPLEX_ZERO_TOL))
@@ -924,11 +982,9 @@ class OpenCLKernel():
             c_jmp_n_opt = max(c_jmp_n_opt, len(set(c_jmp_instr[i, j]['IDX'])))
 
         if self.debug:
-            msg = "prepared {} jumps. Require {} operations per work-item."
+            msg = "read {} operators A(ω) requiring {} operations per work-item."
             print_debug(msg, jmp_n, jmp_n_max)
-            msg = "the jumps can be optimized such that at most {} operations are required"
-            print_debug(msg, jmp_n_opt)
-            msg = "... {} transitions have non-zero (>{}) contribution."
+            msg = "... {} operations have non-zero (>{}) contribution."
             print_debug(msg, c_jmp_n_opt, QOP.COMPLEX_ZERO_TOL)
 
         self.jmp_n = c_jmp_n_opt if self.optimize_jumps else n_max_instr
@@ -960,20 +1016,18 @@ class OpenCLKernel():
         """
         N, M = self.h_state.shape[0:2]
         cl_jmp_opt = np.zeros((*cl_jmp.shape[0:3], self.jmp_n), dtype=cl_jmp.dtype)
-        allidx = [(i, j) for j in range(M) for i in range(M)]
 
+        allidx = [(i, j) for j in range(M) for i in range(M)]
         for (k, (i, j)) in itertools.product(range(N), allidx):
             # contributing cell indices
             jcell = cl_jmp[k, i, j]
             jcell0 = jcell[np.where(np.abs(jcell['PF']) > 0)[0]]
-            cidx = list(
-                np.where(jcell0['IDX'] == idx)[0]
-                for idx in set(jcell0['IDX']))
+            idxS = set(jcell0['IDX'])
+            cidxG = (np.where(jcell0['IDX'] == idx)[0] for idx in idxS)
 
-            # accumulate prefactors, assign
-            jcell_acc = list(
-                (jcell0[indx[0]]['IDX'], np.sum(jcell0[indx]['PF']))
-                for indx in cidx)
+            # accumulate prefactors
+            idxpf = lambda idx: (jcell0[idx[0]]['IDX'], np.sum(jcell0[idx]['PF']))
+            jcell_acc = list(idxpf(idx) for idx in cidxG)
             cl_jmp_opt[k, i, j][:len(jcell_acc)] = jcell_acc
 
         return cl_jmp_opt
