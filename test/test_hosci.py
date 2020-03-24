@@ -74,10 +74,10 @@ def test_thermalization():
     kernel.compile()
     kernel.sync(t_bath=t_bath, y_0=y_0, state=[state0]*4)
     tlist = time_gatter(tr[0], tr[1], tr[2])
-    result = kernel.run(tlist).tstate
+    (_, _, tstate, _) = kernel.run(tlist)
 
     # test whether states have thermalized
-    En = np.trace(result[-1,:]@On, axis1=1, axis2=2).real
+    En = np.trace(tstate[-1,:]@On, axis1=1, axis2=2).real
     assert np.allclose(expected_En, En, **QOP.TEST_TOLS)
 
     # -- Run with OpenCL kernel

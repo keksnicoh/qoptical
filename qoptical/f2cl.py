@@ -21,6 +21,7 @@ import numpy as np
 T_VAR = 'VAR'
 T_FUNC = 'T_FUNC'
 T_SYMBOLE = 'T_SYMBOLE'
+T_METHOD = 'T_METHOD'
 T_GLOBAL_SYMBOLE = 'T_GLOBAL_SYMBOLE'
 T_VAL = 'T_VAL'
 T_BIN = 'T_BIN'
@@ -84,7 +85,6 @@ def f2cl(f, cl_fname, cl_param_type=None):
         with name **cl_fname**.
         """
     ctree = create_ctree(f)
-
     if ctree[0] != T_RETURN:
         raise NotImplementedError('must be a function.')
 
@@ -136,6 +136,9 @@ def instruction_scalar(instruction):
 
     if instruction.opname == "LOAD_GLOBAL":
         return (T_GLOBAL_SYMBOLE, instruction.argval)
+
+    if instruction.opname == "LOAD_METHOD":
+        return (T_METHOD, instruction.argval)
 
     if instruction.opname == "LOAD_FAST":
         return (T_SYMBOLE, instruction.argval, instruction.arg)
@@ -251,8 +254,8 @@ def ctree_print(a, l=0):
 def create_ctree(f):
     """ creates some pseudo tree-like-thing from function
         instructions. This function only works on a small
-        subset of functions. Currently only functions with
-        a single expression (lambda) and witout any branches
+        subset of functions. Currently only functions of
+        single expressions (lambda), witout any branches,
         are supported.
         """
     read = []
@@ -273,7 +276,7 @@ def create_ctree(f):
             #   the moment.
             raise NotImplementedError('Only one line expressions are allowed. Sryy')
 
-        elif a.opname in ['LOAD_CONST', 'LOAD_FAST', 'LOAD_GLOBAL']:
+        elif a.opname in ['LOAD_CONST', 'LOAD_FAST', 'LOAD_GLOBAL', 'LOAD_METHOD']:
             read.append(instruction_scalar(a))
 
         elif a.opname == 'LOAD_ATTR':
@@ -303,6 +306,20 @@ def create_ctree(f):
             current = (T_FUNC, fname, [instruction_scalar(fa) for fa in fargs])
             read = read[:-a.arg-1]
             read.append(current)
+
+        # python 3.7
+        elif a.opname == 'CALL_METHOD':
+            fargs = read[-a.arg:]
+            if read[-a.arg-2][0] == T_GLOBAL_SYMBOLE:
+                fname = (T_GLOBAL_SYMBOLE, read[-a.arg-2][1] + '.' + read[-a.arg-1][1])
+                current = (T_FUNC, fname, [instruction_scalar(fa) for fa in fargs])
+                read = read[:-a.arg-2]
+                read.append(current)
+            else:
+                fname = read[-a.arg-1]
+                current = (T_FUNC, fname, [instruction_scalar(fa) for fa in fargs])
+                read = read[:-a.arg-1]
+                read.append(current)
 
         elif a.opname == 'RETURN_VALUE':
             if len(read) != 1:

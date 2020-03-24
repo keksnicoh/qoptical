@@ -71,7 +71,7 @@ def test_divergence_1():
     kernel.compile()
     kernel.sync(t_bath=config['t_bath'], y_0=config['y_0'], state=rs.thermal_state(T=config['t_rho0']))
     tlist = qo.time_gatter(*config['tr'])
-    result = kernel.run(tlist).tstate
+    (_, _, tstate, _) = kernel.run(tlist)
 
     # -- Run with OpenCL kernel
     kernelCL = OpenCLKernel(rs)
@@ -82,5 +82,5 @@ def test_divergence_1():
 
     # -- compare all states at all times
     assert_allclose(tlist, tlist_cl)
-    assert_allclose(resultCL, result, **qo.QO.TEST_TOLS)
+    assert_allclose(resultCL, tstate, **qo.QO.TEST_TOLS)
 

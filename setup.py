@@ -15,8 +15,8 @@ setup(
         "qutip",
     ],
     package_data={
-        "": [
-            "qoptical/kernel_opencl.tmpl.c",
+        "qoptical": [
+            "kernel_opencl.tmpl.c",
         ]
     },
     include_package_data=True,

@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 0.01
+
+- **2020-03-24**:
+    - cleanup and port to python 3.7.
+    - Removed metropolis stuff
+    - Removed result.py
+
 ## 0.0
 - **2019-05-24**:
     - fixed usage of `cl.tools.match_dtype_to_c_struct` such that the current context is passed.

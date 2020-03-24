@@ -9,9 +9,9 @@ from . import settings
 
 DTYPE_JUMP = np.dtype([
     ('I', settings.DTYPE_INT, 2),
-    ('d', settings.DTYPE_COMPLEX, 1),
-    ('w', settings.DTYPE_FLOAT, 1),
-    ('n', settings.DTYPE_FLOAT, 1),
+    ('d', settings.DTYPE_COMPLEX),
+    ('w', settings.DTYPE_FLOAT),
+    ('n', settings.DTYPE_FLOAT),
 ])
 
 class ReducedSystem():
@@ -23,7 +23,7 @@ class ReducedSystem():
 
     @classmethod
     def from_dipole_eb(cls, h0, dipole_eb):
-        """ create HeadBathCoupling from a **dipole_operator**
+        """ create HeatBathCoupling from a **dipole_operator**
             in energy eigenbase. Therefore, the (ij) component
             of the operator represents the jump energy-state j to i.
 

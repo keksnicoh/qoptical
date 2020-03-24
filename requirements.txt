@@ -1,7 +1,7 @@
 cython
 mako
 pybind11
-numpy=1.15.2
+numpy
 scipy
 pytest
 pytools

@@ -59,7 +59,7 @@ def test_complex_dipole_complex():
     kernel.compile()
     kernel.sync(t_bath=t_bath, y_0=y_0, state=[state0]*4)
     tlist = time_gatter(*tr)
-    result = kernel.run(tlist).tstate
+    (_, _, tstate, _) = kernel.run(tlist)
 
     # -- Run with OpenCL kernel
     kernelCL = OpenCLKernel(rs)
@@ -70,4 +70,4 @@ def test_complex_dipole_complex():
 
     # -- compare all states at all times
     assert_allclose(tlist, tlist_cl)
-    assert_allclose(resultCL, result, atol=1e-5, rtol=1e-7)
+    assert_allclose(resultCL, tstate, atol=1e-5, rtol=1e-7)

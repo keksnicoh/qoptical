@@ -196,9 +196,9 @@ def test_qutip_kernel_simple_htl():
     )
 
     tlist = np.arange(0, 2, 0.005)
-    result = kernel.run(tlist)
-    assert np.all(result.texpect[0, 0] == 0.5)
-    assert np.all(result.texpect[0, 1] == 0.8)
+    (_, _, _, texpect) = kernel.run(tlist)
+    assert np.all(texpect[0, 0] == 0.5)
+    assert np.all(texpect[0, 1] == 0.8)
 
 def test_qutip_run_stateless():
     kernel = QutipKernel(ReducedSystem([
@@ -216,9 +216,9 @@ def test_qutip_run_stateless():
         t_bath = 2,
         y_0    = 1)
     # test if both are the same (no sync)
-    result_a = kernel.run(np.arange(0, .1, 0.005))
-    result_b = kernel.run(np.arange(0, .1, 0.005))
-    assert np.all(result_a.state[0][-1] == result_b.state[0][-1])
+    (_, fstate_a, _, _) = kernel.run(np.arange(0, .1, 0.005))
+    (_, fstate_b, _, _) = kernel.run(np.arange(0, .1, 0.005))
+    assert np.all(fstate_a[0][-1] == fstate_b[0][-1])
 
 def test_qutip_fail_due_sync_with_e_ops():
     """ test is kernel.run fails whenever e_ops
@@ -239,7 +239,7 @@ def test_qutip_fail_due_sync_with_e_ops():
         y_0    = 1,
         e_ops  = [[1, 0, 0, 0, 0, 0, 0, 0, 0]])
     try:
-        result_a = kernel.run(np.arange(0, .1, 0.005), sync_state=True)
+        kernel.run(np.arange(0, .1, 0.005), sync_state=True)
     except ValueError:
         pass
 
@@ -273,6 +273,6 @@ def test_qutip_kernel_nontrivial_basis():
     kernel = QutipKernel(ReducedSystem(h0))
     kernel.compile()
     kernel.sync(state=rho0, t_bath=T, y_0=3)
-    result = kernel.run(np.arange(0, 0.5, 0.001))
-    assert np.all(np.abs(result.state[0].real - thermal_state) < EQ_COMPARE_TOL)
+    (_, fstate, _, _) = kernel.run(np.arange(0, 0.5, 0.001))
+    assert np.all(np.abs(fstate.real - thermal_state) < EQ_COMPARE_TOL)
 

@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """ contains qutip kernels for solving optical
-    master equation.
+    master equation. This is only a reference
+    implementation.
     :author: keksnicoh
 """
 from qutip import Qobj, mesolve, expect
 import numpy as np
 from .settings import QOP, print_debug
 from .util import *
-from .result import OpMeResult
 from time import time
 
 class QutipKernel():
@@ -15,7 +15,7 @@ class QutipKernel():
         using QuTip: http://qutip.org/docs/4.1/modules/qutip/mesolve.html
     """
     def __init__(self, system, n_htl=0, n_e_ops=0, debug=None):
-        """ create QutipKernel for given ``system`` """
+        """ create QutipKernel for given system """
         # api state
         self.system    = system
         self.state     = None
@@ -227,7 +227,11 @@ class QutipKernel():
             # args
             args = None
             if self.args is not None:
-                args = self.args[i] # XXX TEST ME
+                # python3.7 and some api changes later, we have to convert the numpy array to a dict. As ths is only
+                # a reference integrator we won't care about it later..
+                keys = [x[0] for x in self.args[i].dtype.descr]
+                values = self.args[i]
+                args = dict(zip(keys, values))
 
             # mesolve
             Lf  = [l for l in L if not np.allclose(l.full(), 0)]
@@ -259,10 +263,12 @@ class QutipKernel():
             self.q_state = q_state_new
             self.state   = fstate
 
-        # copy date to avoid references
-        return OpMeResult(tlist=tlist[:],
-                          state=fstate[:]    if fstate  is not None else None,
-                          tstate=tstate[:]   if tstate  is not None else None,
-                          texpect=texpect[:] if texpect is not None else None)
+        # copy data to avoid references
+        return (
+          tlist[:],
+          fstate[:] if fstate is not None else None,
+          tstate[:] if tstate is not None else None,
+          texpect[:] if texpect is not None else None
+        )
 
 

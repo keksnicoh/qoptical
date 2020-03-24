@@ -26,16 +26,6 @@ If `QOP_DEBUG` is enabled then the integrator provides some information about th
 [...] ... 9 transitions have non-zero (>0.0001) contribution.
 ```
 
-## QOP_DOUBLE_PRECISION
-
-Enables double precision for integration
-
-```bash
-export QOP_DOUBLE_PRECISION=1
-```
-
-***XXX*** Not fully implemented yet.
-
 ## QOP_ECHO_COMPILED_KERNEL
 
 echo compiled OpenCL kernel after compilation

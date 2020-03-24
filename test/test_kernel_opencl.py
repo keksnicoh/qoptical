@@ -157,17 +157,16 @@ def test_von_neumann_basis():
     assert_allclose(ts[-1][0], rho1, **QOP.TEST_TOLS)
 
     # test against reference
-    resultr = opmesolve(h0, states, 0, 0, tw=[], tr=tr, kernel="QuTip")
-    assert_allclose(ts[-1][0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(ts[-1][1], resultr.state[1], **QOP.TEST_TOLS)
+    (_, fstate, _, _) = opmesolve(h0, states, 0, 0, tw=[], tr=tr, kernel="QuTip")
+    assert_allclose(ts[-1][0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(ts[-1][1], fstate[1], **QOP.TEST_TOLS)
 
 def test_two_level_TZero():
     """ most simple dissipative case.
         two level system with at T=0:
 
-          d rho / dt = -i[H,rho] + y_0 \Omega^3 D[A(\Omega)]
-
-        """
+          d rho / dt = -i[H,rho] + y_0 \\Omega^3 D[A(\\Omega)]
+    """
     REF_TOL = 0.0001
     OMEGA = 2.0
     tr = (0, 1.0, 0.001)
@@ -196,12 +195,12 @@ def test_two_level_TZero():
     assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=0, y_0=y_0, tw=[OMEGA], tr=tr, kernel="QuTip")
+    (_, fstate, _, _) = opmesolve(h0, states, t_bath=0, y_0=y_0, tw=[OMEGA], tr=tr, kernel="QuTip")
 
     # test against reference
-    assert_allclose(rhof[0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(rhof[1], resultr.state[1], **QOP.TEST_TOLS)
-    assert_allclose(rhof[2], resultr.state[2], **QOP.TEST_TOLS)
+    assert_allclose(rhof[0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(rhof[1], fstate[1], **QOP.TEST_TOLS)
+    assert_allclose(rhof[2], fstate[2], **QOP.TEST_TOLS)
 
 def test_three_level_TZero():
     """ two different annihilation processes A(Omega), A(2*Omega) at T=0:
@@ -252,12 +251,12 @@ def test_three_level_TZero():
     assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=0, y_0=1.0, tw=tw, tr=tr, kernel="QuTip")
+    (_, fstate, _ , _) = opmesolve(h0, states, t_bath=0, y_0=1.0, tw=tw, tr=tr, kernel="QuTip")
 
     # test against reference
-    assert_allclose(rhof[0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(rhof[1], resultr.state[1], **QOP.TEST_TOLS)
-    assert_allclose(rhof[2], resultr.state[2], **QOP.TEST_TOLS)
+    assert_allclose(rhof[0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(rhof[1], fstate[1], **QOP.TEST_TOLS)
+    assert_allclose(rhof[2], fstate[2], **QOP.TEST_TOLS)
 
 def test_four_level_TZero():
     """ four level system at T=0.
@@ -312,26 +311,26 @@ def test_four_level_TZero():
     assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=0, y_0=0.15, tr=tr, kernel="QuTip")
+    (_, fstate, _, _) = opmesolve(h0, states, t_bath=0, y_0=0.15, tr=tr, kernel="QuTip")
 
     # test against reference
-    assert_allclose(rhof[0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(rhof[1], resultr.state[1], **QOP.TEST_TOLS)
-    assert_allclose(rhof2[0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(rhof2[1], resultr.state[1], **QOP.TEST_TOLS)
+    assert_allclose(rhof[0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(rhof[1], fstate[1], **QOP.TEST_TOLS)
+    assert_allclose(rhof2[0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(rhof2[1], fstate[1], **QOP.TEST_TOLS)
 
 def test_two_level_T():
     """ most simple dissipative case at finite temperature:
         two level system at T > 0:
 
-          d rho / dt = -i[H,rho] + y_0 * \Omega^3 * (1 + N(\Omega)) * D[A(\Omega)]
-                                 + y_0 * \Omega^3 * N(\Omega) * D[A^\dagger(\Omega)]
+          d rho / dt = -i[H,rho] + y_0 * \Omega^3 * (1 + N(\\Omega)) * D[A(\\Omega)]
+                                 + y_0 * \Omega^3 * N(\\Omega) * D[A^\\dagger(\\Omega)]
 
         - single jump
         - no dipole
         - eigenbase
         - compared optimized vs. reference
-        """
+    """
     REF_TOL = 0.0001
     OMEGA   = 2.0
     tr      = (0, 1.0, 0.001)
@@ -364,11 +363,11 @@ def test_two_level_T():
     assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tw=[OMEGA], tr=tr, kernel="QuTip")
+    (_, fstate, _, _) = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tw=[OMEGA], tr=tr, kernel="QuTip")
 
     # test against reference
-    assert_allclose(rhof[0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(rhof[1], resultr.state[1], **QOP.TEST_TOLS)
+    assert_allclose(rhof[0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(rhof[1], fstate[1], **QOP.TEST_TOLS)
 
 
 def test_three_level_T():
@@ -423,12 +422,12 @@ def test_three_level_T():
     assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=1.0, tw=tw, tr=tr, kernel="QuTip")
+    (_, fstate, _, _) = opmesolve(h0, states, t_bath=t_bath, y_0=1.0, tw=tw, tr=tr, kernel="QuTip")
 
     # test against reference
-    assert_allclose(rhof[0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(rhof[1], resultr.state[1], **QOP.TEST_TOLS)
-    assert_allclose(rhof[2], resultr.state[2], **QOP.TEST_TOLS)
+    assert_allclose(rhof[0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(rhof[1], fstate[1], **QOP.TEST_TOLS)
+    assert_allclose(rhof[2], fstate[2], **QOP.TEST_TOLS)
 
 def test_four_level_T():
     """ four level system at finite temperature T
@@ -484,13 +483,13 @@ def test_four_level_T():
     assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tr=tr, kernel="QuTip")
+    (_, fstate, _, _) = opmesolve(h0, states, t_bath=t_bath, y_0=y_0, tr=tr, kernel="QuTip")
 
     # test against reference
-    assert_allclose(rhof[0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(rhof[1], resultr.state[1], **QOP.TEST_TOLS)
-    assert_allclose(rhof2[0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(rhof2[1], resultr.state[1], **QOP.TEST_TOLS)
+    assert_allclose(rhof[0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(rhof[1], fstate[1], **QOP.TEST_TOLS)
+    assert_allclose(rhof2[0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(rhof2[1], fstate[1], **QOP.TEST_TOLS)
 
 
 def test_time_gatter():
@@ -603,8 +602,8 @@ def test_two_level_T_driving():
         (1.0, 2.0),
         (1.0, 2.5)
     ], dtype=np.dtype([
-        ('A', np.float32, ),
-        ('b', np.float32, ),
+        ('A', np.float32),
+        ('b', np.float32),
     ]))
 
     kernel = OpenCLKernel(ReducedSystem(h0, [
@@ -622,7 +621,7 @@ def test_two_level_T_driving():
     assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(
+    (_, fstate, _, _) = opmesolve(
         [h0, [[1, 1, 1, 1], kernel.ht_coeff[0]]],
         states,
         t_bath=t_bath,
@@ -633,9 +632,9 @@ def test_two_level_T_driving():
         args=param)
 
     # test against reference
-    assert_allclose(rhof[0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(rhof[1], resultr.state[1], **QOP.TEST_TOLS)
-    assert_allclose(rhof[2], resultr.state[2], **QOP.TEST_TOLS)
+    assert_allclose(rhof[0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(rhof[1], fstate[1], **QOP.TEST_TOLS)
+    assert_allclose(rhof[2], fstate[2], **QOP.TEST_TOLS)
 
 def test_three_level_T_driving():
     """ three level system at finite temperature with
@@ -658,8 +657,8 @@ def test_three_level_T_driving():
         (1.0, 2.0),
         (1.0, 2.5),
     ], dtype=np.dtype([
-        ('A', np.float32, ),
-        ('b', np.float32, ),
+        ('A', np.float32),
+        ('b', np.float32),
     ]))
     htl = [
         0, 1+0.5j, -0.33j,
@@ -683,7 +682,7 @@ def test_three_level_T_driving():
     assert np.isclose(tf, tr[1])
 
     # reference result
-    resultr = opmesolve(
+    (_, fstate, _, _) = opmesolve(
         [h0, [htl, kernel.ht_coeff[0]]],
         states,
         t_bath=t_bath,
@@ -694,9 +693,9 @@ def test_three_level_T_driving():
         args=param)
 
 
-    assert_allclose(rhof[0], resultr.state[0], **QOP.TEST_TOLS)
-    assert_allclose(rhof[1], resultr.state[1], **QOP.TEST_TOLS)
-    assert_allclose(rhof[2], resultr.state[2], **QOP.TEST_TOLS)
+    assert_allclose(rhof[0], fstate[0], **QOP.TEST_TOLS)
+    assert_allclose(rhof[1], fstate[1], **QOP.TEST_TOLS)
+    assert_allclose(rhof[2], fstate[2], **QOP.TEST_TOLS)
 
 
 def test_dork():
@@ -765,7 +764,6 @@ def test_yt_hosci_qutip_data_struct():
         ('A', QOP.T_FLOAT),
         ('wl', QOP.T_FLOAT),
     ]))
-
     a = destroy(dimH)
     H = a.dag() * a
     psi0 = basis(dimH, 9)
@@ -774,7 +772,7 @@ def test_yt_hosci_qutip_data_struct():
     times = np.linspace(0, 1, 10000)
 
     # qutip solve
-    output = mesolve(H, psi0, times, c_ops, [a.dag() * a], args=data[0])
+    output = mesolve(H, psi0, times, c_ops, [a.dag() * a], args={'y': 0.25, 'A': 0.75, 'wl': 20})
 
     # qoptical solve
     result = opmesolve_cl_expect(

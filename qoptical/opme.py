@@ -10,9 +10,9 @@ from .kernel_qutip import QutipKernel
 
 DTYPE_JUMP = np.dtype([
     ('I', settings.DTYPE_INT,     2),
-    ('d', settings.DTYPE_COMPLEX, 1),
-    ('w', settings.DTYPE_FLOAT,   1),
-    ('n', settings.DTYPE_FLOAT,   1),
+    ('d', settings.DTYPE_COMPLEX),
+    ('w', settings.DTYPE_FLOAT),
+    ('n', settings.DTYPE_FLOAT),
 ])
 class ReducedSystem():
     """ classification of a reduced system in an optical environment.
@@ -189,7 +189,6 @@ def opmesolve(H, rho0, t_bath, y_0, tr, dipole=None, tw=None, e_ops=[], kernel="
     else:
         h0, htl = H, []
 
-    print(h0)
     system = ReducedSystem(h0      = h0,
                            dipole  = dipole,
                            tw      = tw,
@@ -216,7 +215,7 @@ def opmesolve(H, rho0, t_bath, y_0, tr, dipole=None, tw=None, e_ops=[], kernel="
                 e_ops=e_ops if len(e_ops) else None,
                 args=args)
 
-    tlist = np.arange(tr[0], tr[1]+tr[2], tr[2])
+    tlist = np.arange(tr[0], tr[1] + tr[2], tr[2])
     return kernel.run(tlist)
 
 

@@ -5,7 +5,7 @@
 
 import numpy as np
 
-class OpMeResult():
+class OpMeResult2():
 
     def __init__(self, state, tlist, tstate, texpect):
         self.state   = state
