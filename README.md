@@ -27,4 +27,4 @@ pytest .
 
 [1]: https://en.wikiversity.org/wiki/Open_Quantum_Systems/The_Quantum_Optical_Master_Equation
 [2]: http://qutip.org/
-[3]: xxx
+[3]: https://github.com/keksnicoh/msc_thesis_dc_qjj
