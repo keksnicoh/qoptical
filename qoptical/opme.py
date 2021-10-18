@@ -174,6 +174,17 @@ class ReducedSystem():
             for i in vectorize(i)
         )
 
+def is_square(m):
+    """ helper to check whether a iterable thing is a square matrix. """
+    if not hasattr(m, '__len__'):
+        return False
+
+    is_flat_square_matrix = all(np.isscalar(c) for c in m) and np.sqrt(len(m)).is_integer()
+    if is_flat_square_matrix:
+        return True
+
+    is_structed_square_matrix = all(len(row) == len(m) for row in m)
+    return is_structed_square_matrix
 
 def opmesolve(H, rho0, t_bath, y_0, tr, dipole=None, tw=None, e_ops=[], kernel="QuTip", args=None):
 
@@ -182,7 +193,7 @@ def opmesolve(H, rho0, t_bath, y_0, tr, dipole=None, tw=None, e_ops=[], kernel="
     if isinstance(H, list):
         if len(H) == 1:
             h0, htl = H[0], []
-        elif is_sqmat(np.array(H)) or np.isscalar(H[0]):
+        elif is_square(H) or np.isscalar(H[0]):
             h0, htl = H, []
         else:
             h0, htl = H[0], H[1:]
