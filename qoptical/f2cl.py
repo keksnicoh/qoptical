@@ -176,9 +176,9 @@ def f2cl_expr(ctree, glb, closure):
         return glob_attr_to_cl(glb[glob_key[0]], glob_key[1:])
 
     if ctree[0] == T_VAL:
-        if isinstance(ctree[1], (int, np.int)):
+        if isinstance(ctree[1], int):
             return r_clint(ctree[1])
-        if isinstance(ctree[1], (float, np.float, np.double)):
+        if isinstance(ctree[1], (float, np.double)):
             return r_clfloat(ctree[1])
         if isinstance(ctree[1], str):
             return "'{}'".format(ctree[1])
@@ -203,9 +203,9 @@ def f2cl_expr(ctree, glb, closure):
 
     if ctree[0] == T_DEREF:
         val = closure[ctree[1]].cell_contents
-        if isinstance(val, (int, np.int)):
+        if isinstance(val, int):
             return r_clint(val)
-        if isinstance(val, (float, np.float, np.double)):
+        if isinstance(val, (float, np.double)):
             return r_clfloat(val)
         if isinstance(val, str):
             return "'{}'".format(val)
