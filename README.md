@@ -14,6 +14,7 @@ clone the repository and then
 
 ```
 python3 -m pip install .
+python3 -m pip install -U matplotlib
 ```
 
 
