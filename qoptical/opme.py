@@ -47,14 +47,14 @@ class ReducedSystem():
         n_e_ops = int(n_e_ops)
 
         # validate
-        assert tw is None or jumps is None,             'overdetermined args'
-        assert is_H(h0),                      'h0 must be hermitian'
+        assert tw is None or jumps is None, 'overdetermined args'
+        assert is_H(h0), 'h0 must be hermitian'
         if dipole is not None:
-            assert is_H(dipole),          'dipole transition moment must be hermitian'
-            assert np.all(dipole.shape == h0.shape),    'dipole transition moment must match h0'
-        assert n_htl >= 0,                              'n_htl must 0 or positive.'
-        assert n_e_ops >= 0,                            'n_e_ops must 0 or positive.'
-        assert tw is None or np.all(tw > 0),            'transition frequencies must be greater than zero'
+            assert is_H(dipole), 'dipole transition moment must be hermitian'
+            assert np.all(dipole.shape == h0.shape), 'dipole transition moment must match h0'
+        assert n_htl >= 0, 'n_htl must 0 or positive.'
+        assert n_e_ops >= 0, 'n_e_ops must 0 or positive.'
+        assert tw is None or np.all(tw > 0), 'transition frequencies must be greater than zero'
 
         self.h0      = h0
         self.dipole  = dipole
