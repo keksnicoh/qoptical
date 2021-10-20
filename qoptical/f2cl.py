@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """ module to dissassemble functions to generate
     OpenCL functions from it. Currently this module
-    is capable of handling a small special case
-    of functions:
+    is capable of handling a small subset of functions:
 
         1. Single Expression
         2. No Conditionals

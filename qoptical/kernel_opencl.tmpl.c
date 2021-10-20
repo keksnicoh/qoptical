@@ -150,10 +150,11 @@ __kernel void opmesolve_rk4_eb(
             _rho,
             $(cfloat_add)(
                 $(cfloat_rmul)(dtb1, k1),
-            $(cfloat_add)(
-                $(cfloat_rmul)(dtb2, k2),
-                $(cfloat_rmul)(dtb3, k3)
-            ))
+                $(cfloat_add)(
+                    $(cfloat_rmul)(dtb2, k2),
+                    $(cfloat_rmul)(dtb3, k3)
+                )
+            )
         );
 
         result[OUT_IDX0 + __item] = _rho;
