@@ -26,7 +26,7 @@
 __kernel void opmesolve_rk4_eb(
     __global const $(cfloat_t) *hu,/*{arg_htl}*/
     __global const t_jump *jb,/*{arg_sysparam}*/
-    __global __write_only $(cfloat_t) *result,/*{arg_debug}*/
+    __global $(cfloat_t) *result,/*{arg_debug}*/
     __global const $(cfloat_t) *rho0,
     const $(float) t0,
     const $(float) dt,
